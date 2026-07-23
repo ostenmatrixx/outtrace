@@ -1,0 +1,37 @@
+{
+  "name": "openflow",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @openflow/contracts && npm run build --workspace @openflow/api && npm run build --workspace @openflow/worker && npm run build --workspace @openflow/dashboard",
+    "db:migrate": "dotenv -e .env -- npm run db:migrate --workspace @openflow/api",
+    "dev": "dotenv -e .env -- concurrently --kill-others-on-fail --names api,worker,dashboard \"npm run dev --workspace @openflow/api\" \"npm run dev --workspace @openflow/worker\" \"npm run dev --workspace @openflow/dashboard\"",
+    "format": "prettier --write --ignore-unknown .",
+    "format:check": "prettier --check --ignore-unknown .",
+    "lint": "eslint .",
+    "test": "npm run build --workspace @openflow/contracts && npm run test --workspaces --if-present",
+    "test:integration": "npm run build --workspace @openflow/contracts && dotenv -e .env -- npm run test:integration --workspace @openflow/api",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:integration && npm run build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "concurrently": "^9.2.1",
+    "dotenv-cli": "^11.0.0",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^16.5.0",
+    "prettier": "^3.9.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.65.0"
+  }
+}
