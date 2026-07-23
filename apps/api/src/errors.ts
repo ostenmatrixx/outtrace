@@ -1,4 +1,4 @@
-import type { ApiError, ApiErrorCode } from '@openflow/contracts';
+import type { ApiError, ApiErrorCode } from '@outtrace/contracts';
 
 export class HttpError extends Error {
   constructor(
@@ -26,7 +26,7 @@ export function authenticationRequired(): HttpError {
   return new HttpError(
     401,
     'AUTHENTICATION_REQUIRED',
-    'Both x-openflow-key-id and x-openflow-key headers are required.',
+    'Both x-outtrace-key-id and x-outtrace-key headers are required.',
   );
 }
 

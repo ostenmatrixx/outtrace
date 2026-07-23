@@ -20,8 +20,8 @@ export interface IngestionCredentials {
 }
 
 export function readIngestionCredentials(request: FastifyRequest): IngestionCredentials {
-  const keyId = request.headers['x-openflow-key-id'];
-  const key = request.headers['x-openflow-key'];
+  const keyId = request.headers['x-outtrace-key-id'];
+  const key = request.headers['x-outtrace-key'];
 
   if (keyId === undefined || key === undefined) {
     throw authenticationRequired();

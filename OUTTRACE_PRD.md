@@ -1,4 +1,4 @@
-# OpenFlow MVP — Product Requirements Document
+# Outtrace MVP — Product Requirements Document
 
 **Status:** Draft v0.1  
 **Owner:** Austin Gabriel Diaz  
@@ -8,7 +8,7 @@
 
 ## 1. Product summary
 
-OpenFlow gives automation agencies one place to monitor business processes running across n8n, Make, and custom APIs.
+Outtrace gives automation agencies one place to monitor business processes running across n8n, Make, and custom APIs.
 
 It correlates technical workflow events into business-level process instances such as:
 
@@ -18,7 +18,7 @@ It correlates technical workflow events into business-level process instances su
 - Invoice processing
 - Support escalation
 
-OpenFlow initially observes, detects, and explains incidents. It does not execute workflows or automatically modify customer systems.
+Outtrace initially observes, detects, and explains incidents. It does not execute workflows or automatically modify customer systems.
 
 ## 2. Problem
 
@@ -79,7 +79,7 @@ The riskiest assumptions are:
 - Cross-platform visibility is painful enough to pay for.
 - Agencies will add lightweight instrumentation to existing workflows.
 - Built-in platform alerts are insufficient.
-- Agencies are comfortable sending limited workflow metadata to OpenFlow.
+- Agencies are comfortable sending limited workflow metadata to Outtrace.
 
 ## 5. Goals
 
@@ -126,7 +126,7 @@ The MVP will not:
 
 ### 8.1 Event ingestion
 
-OpenFlow provides a secure HTTP endpoint:
+Outtrace provides a secure HTTP endpoint:
 
 ```text
 POST /v1/events
@@ -186,7 +186,7 @@ The MVP can use a simple form rather than a visual builder.
 
 Events sharing the same `processKey` and `instanceKey` belong to one process instance.
 
-OpenFlow must display:
+Outtrace must display:
 
 - Business identifier
 - Current process state
@@ -240,7 +240,7 @@ Operators can:
 
 ### 8.6 Slack notifications
 
-OpenFlow sends Slack alerts for new incidents.
+Outtrace sends Slack alerts for new incidents.
 
 Example:
 
@@ -274,7 +274,7 @@ MVP roles:
 
 ### 8.8 Privacy and redaction
 
-OpenFlow should collect operational metadata, not full business payloads.
+Outtrace should collect operational metadata, not full business payloads.
 
 Requirements:
 
@@ -291,21 +291,21 @@ Requirements:
 1. User creates a client.
 2. User creates a process.
 3. User defines expected stages and timeouts.
-4. OpenFlow generates an ingestion key and event examples.
+4. Outtrace generates an ingestion key and event examples.
 5. User adds HTTP event calls to n8n or Make.
 6. User sends a test event.
-7. OpenFlow confirms that monitoring is active.
+7. Outtrace confirms that monitoring is active.
 
 ### Investigate an incident
 
-1. OpenFlow detects a missing stage.
+1. Outtrace detects a missing stage.
 2. Slack notification is sent.
 3. Operator opens the incident.
 4. Operator reviews the cross-platform timeline.
 5. Operator opens the source execution.
 6. Operator fixes or retries it in the source platform.
 7. A completion event arrives.
-8. OpenFlow automatically resolves the incident.
+8. Outtrace automatically resolves the incident.
 
 ## 10. Main screens
 
@@ -389,7 +389,7 @@ Suggested stack:
 ## 12. Initial repository structure
 
 ```text
-openflow/
+outtrace/
 ├── apps/
 │   ├── api/
 │   ├── worker/
@@ -402,7 +402,7 @@ openflow/
 ├── docker-compose.yml
 ├── package.json
 ├── README.md
-└── OPENFLOW_PRD.md
+└── OUTTRACE_PRD.md
 ```
 
 ## 13. Initial data model

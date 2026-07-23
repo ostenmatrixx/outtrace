@@ -57,7 +57,7 @@ describe('GET /health', () => {
         postgres: { status: 'up' },
         redis: { status: 'up' },
       },
-      service: 'openflow-api',
+      service: 'outtrace-api',
       status: 'ok',
     });
   });
@@ -76,7 +76,7 @@ describe('GET /health', () => {
         postgres: { status: 'down' },
         redis: { status: 'down' },
       },
-      service: 'openflow-api',
+      service: 'outtrace-api',
       status: 'degraded',
     });
     expect(response.body).not.toContain('sensitive-host');
@@ -100,7 +100,7 @@ describe('POST /v1/events request boundary', () => {
     expect(response.json()).toEqual({
       error: {
         code: 'AUTHENTICATION_REQUIRED',
-        message: 'Both x-openflow-key-id and x-openflow-key headers are required.',
+        message: 'Both x-outtrace-key-id and x-outtrace-key headers are required.',
       },
     });
   });
@@ -114,8 +114,8 @@ describe('POST /v1/events request boundary', () => {
 
     const response = await app.inject({
       headers: {
-        'x-openflow-key': 'valid-secret',
-        'x-openflow-key-id': 'key_1',
+        'x-outtrace-key': 'valid-secret',
+        'x-outtrace-key-id': 'key_1',
       },
       method: 'POST',
       payload: { processKey: 'onboarding', sensitivePayload: 'do-not-echo-this' },
@@ -143,8 +143,8 @@ describe('POST /v1/events request boundary', () => {
     const response = await app.inject({
       headers: {
         'content-type': 'application/json',
-        'x-openflow-key': 'wrong-secret',
-        'x-openflow-key-id': 'key_1',
+        'x-outtrace-key': 'wrong-secret',
+        'x-outtrace-key-id': 'key_1',
       },
       method: 'POST',
       payload: '{"invalid":',
@@ -165,8 +165,8 @@ describe('POST /v1/events request boundary', () => {
 
     const response = await app.inject({
       headers: {
-        'x-openflow-key': 'valid-secret',
-        'x-openflow-key-id': 'key_1',
+        'x-outtrace-key': 'valid-secret',
+        'x-outtrace-key-id': 'key_1',
       },
       method: 'POST',
       payload: {},
@@ -188,8 +188,8 @@ describe('POST /v1/events request boundary', () => {
 
     const response = await app.inject({
       headers: {
-        'x-openflow-key': 'valid-secret',
-        'x-openflow-key-id': 'key_1',
+        'x-outtrace-key': 'valid-secret',
+        'x-outtrace-key-id': 'key_1',
       },
       method: 'POST',
       payload: { status: 'waiting' },
@@ -213,8 +213,8 @@ describe('POST /v1/events request boundary', () => {
     apps.push(app);
     const request = {
       headers: {
-        'x-openflow-key': 'wrong-secret',
-        'x-openflow-key-id': 'sensitive-key-id',
+        'x-outtrace-key': 'wrong-secret',
+        'x-outtrace-key-id': 'sensitive-key-id',
       },
       method: 'POST' as const,
       payload: {},

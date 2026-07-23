@@ -1,5 +1,5 @@
 {
-  "name": "@openflow/worker",
+  "name": "@outtrace/worker",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -13,7 +13,7 @@
     "typecheck": "tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
-    "@openflow/contracts": "0.1.0",
+    "@outtrace/contracts": "0.1.0",
     "bullmq": "^5.81.0",
     "ioredis": "^5.11.1"
   },

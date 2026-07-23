@@ -38,7 +38,7 @@ async function seedDevelopmentData(
     `,
     [
       seed.workspaceId,
-      'OpenFlow development workspace',
+      'Outtrace development workspace',
       seed.ingestionKeyId,
       sha256Hex(seed.ingestionKey),
     ],
@@ -95,7 +95,7 @@ export async function runMigrations(
   const appliedNow: string[] = [];
 
   try {
-    await client.query(`SELECT pg_advisory_lock(hashtext('openflow:migrations'))`);
+    await client.query(`SELECT pg_advisory_lock(hashtext('outtrace:migrations'))`);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         filename text PRIMARY KEY,
@@ -148,7 +148,7 @@ export async function runMigrations(
     }
   } finally {
     try {
-      await client.query(`SELECT pg_advisory_unlock(hashtext('openflow:migrations'))`);
+      await client.query(`SELECT pg_advisory_unlock(hashtext('outtrace:migrations'))`);
     } finally {
       client.release();
     }

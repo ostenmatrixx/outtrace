@@ -1,5 +1,5 @@
 {
-  "name": "openflow",
+  "name": "outtrace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,14 +11,14 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspace @openflow/contracts && npm run build --workspace @openflow/api && npm run build --workspace @openflow/worker && npm run build --workspace @openflow/dashboard",
-    "db:migrate": "dotenv -e .env -- npm run db:migrate --workspace @openflow/api",
-    "dev": "dotenv -e .env -- concurrently --kill-others-on-fail --names api,worker,dashboard \"npm run dev --workspace @openflow/api\" \"npm run dev --workspace @openflow/worker\" \"npm run dev --workspace @openflow/dashboard\"",
+    "build": "npm run build --workspace @outtrace/contracts && npm run build --workspace @outtrace/api && npm run build --workspace @outtrace/worker && npm run build --workspace @outtrace/dashboard",
+    "db:migrate": "dotenv -e .env -- npm run db:migrate --workspace @outtrace/api",
+    "dev": "dotenv -e .env -- concurrently --kill-others-on-fail --names api,worker,dashboard \"npm run dev --workspace @outtrace/api\" \"npm run dev --workspace @outtrace/worker\" \"npm run dev --workspace @outtrace/dashboard\"",
     "format": "prettier --write --ignore-unknown .",
     "format:check": "prettier --check --ignore-unknown .",
     "lint": "eslint .",
-    "test": "npm run build --workspace @openflow/contracts && npm run test --workspaces --if-present",
-    "test:integration": "npm run build --workspace @openflow/contracts && dotenv -e .env -- npm run test:integration --workspace @openflow/api",
+    "test": "npm run build --workspace @outtrace/contracts && npm run test --workspaces --if-present",
+    "test:integration": "npm run build --workspace @outtrace/contracts && dotenv -e .env -- npm run test:integration --workspace @outtrace/api",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:integration && npm run build"
   },

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
-import { eventStatuses, ingestEventSchema } from '@openflow/contracts';
+import { eventStatuses, ingestEventSchema } from '@outtrace/contracts';
 
 import { authenticateIngestion, readIngestionCredentials } from '../authentication.js';
 import { HttpError } from '../errors.js';
@@ -12,7 +12,7 @@ import { isSensitiveMetadataKey, sanitizeMetadata } from '../metadata.js';
 const supportedStatuses = new Set<string>(eventStatuses);
 
 export function eventRateLimitKey(request: FastifyRequest): string {
-  const rawKeyId = request.headers['x-openflow-key-id'];
+  const rawKeyId = request.headers['x-outtrace-key-id'];
   const boundedKeyId =
     typeof rawKeyId === 'string' && rawKeyId.length <= 255 ? rawKeyId.trim() : '[invalid-key-id]';
   const keyIdDigest = createHash('sha256').update(boundedKeyId, 'utf8').digest('hex');
@@ -34,7 +34,7 @@ function validationDetails(
 }
 
 export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
-  app.decorateRequest('openflowWorkspaceId');
+  app.decorateRequest('outtraceWorkspaceId');
 
   app.post(
     '/v1/events',
@@ -42,13 +42,13 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
       config: {
         rateLimit: {
           keyGenerator: eventRateLimitKey,
-          max: app.openflow.eventRateLimitMax,
+          max: app.outtrace.eventRateLimitMax,
           timeWindow: '1 minute',
         },
       },
       preParsing: async (request, _reply, payload) => {
         const credentials = readIngestionCredentials(request);
-        request.openflowWorkspaceId = await authenticateIngestion(app.openflow.pool, credentials);
+        request.outtraceWorkspaceId = await authenticateIngestion(app.outtrace.pool, credentials);
         return payload;
       },
     },
@@ -75,7 +75,7 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
         ...parsed.data,
         metadata: sanitizeMetadata(parsed.data.metadata),
       };
-      const response = await persistEvent(app.openflow.pool, request.openflowWorkspaceId!, event);
+      const response = await persistEvent(app.outtrace.pool, request.outtraceWorkspaceId!, event);
 
       return reply.code(response.duplicate ? 200 : 202).send(response);
     },

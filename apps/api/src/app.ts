@@ -52,7 +52,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     logger: options.logger ?? false,
   });
 
-  app.decorate('openflow', {
+  app.decorate('outtrace', {
     ...options.dependencies,
     eventRateLimitMax: options.eventRateLimitMax ?? 120,
   });

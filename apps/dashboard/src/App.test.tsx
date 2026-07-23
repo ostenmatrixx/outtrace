@@ -25,7 +25,7 @@ describe('dashboard shell', () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
         status: 'ok',
-        service: 'openflow-api',
+        service: 'outtrace-api',
         dependencies: {
           postgres: { status: 'up' },
           redis: { status: 'up' },
@@ -74,7 +74,7 @@ describe('dependency health', () => {
     mockFetch.mockReturnValueOnce(new Promise<Response>(() => undefined)).mockResolvedValueOnce(
       jsonResponse({
         status: 'ok',
-        service: 'openflow-api',
+        service: 'outtrace-api',
         dependencies: {
           postgres: { status: 'up' },
           redis: { status: 'up' },
@@ -111,7 +111,7 @@ describe('dependency health', () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
         status: 'ok',
-        service: 'openflow-api',
+        service: 'outtrace-api',
         dependencies: {
           postgres: { status: 'up' },
           redis: { status: 'up' },
@@ -134,7 +134,7 @@ describe('dependency health', () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
         status: 'degraded',
-        service: 'openflow-api',
+        service: 'outtrace-api',
         dependencies: {
           postgres: { status: 'up' },
           redis: { status: 'down' },
@@ -171,7 +171,7 @@ describe('dependency health', () => {
       .mockResolvedValueOnce(
         jsonResponse({
           status: 'degraded',
-          service: 'openflow-api',
+          service: 'outtrace-api',
           dependencies: {
             postgres: { status: 'up' },
             redis: { status: 'down' },
@@ -181,7 +181,7 @@ describe('dependency health', () => {
       .mockResolvedValueOnce(
         jsonResponse({
           status: 'ok',
-          service: 'openflow-api',
+          service: 'outtrace-api',
           dependencies: {
             postgres: { status: 'up' },
             redis: { status: 'up' },

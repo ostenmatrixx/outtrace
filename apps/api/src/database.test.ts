@@ -4,7 +4,7 @@ import { createPool } from './database.js';
 
 describe('createPool', () => {
   it('configures connection, query, and PostgreSQL statement timeouts', async () => {
-    const pool = createPool({ databaseUrl: 'postgres://localhost/openflow' });
+    const pool = createPool({ databaseUrl: 'postgres://localhost/outtrace' });
 
     expect(pool.options).toMatchObject({
       connectionTimeoutMillis: 5_000,

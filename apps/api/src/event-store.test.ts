@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import type { IngestEvent } from '@openflow/contracts';
+import type { IngestEvent } from '@outtrace/contracts';
 
 import { HttpError } from './errors.js';
 import { persistEvent } from './event-store.js';

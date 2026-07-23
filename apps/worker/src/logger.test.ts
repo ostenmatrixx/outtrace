@@ -18,7 +18,7 @@ describe('safe logging', () => {
     expect(JSON.parse(line)).toEqual({
       timestamp: '2026-07-23T00:00:00.000Z',
       level: 'error',
-      service: 'openflow-worker',
+      service: 'outtrace-worker',
       event: 'job_failed',
       jobId: 'job_1',
       payload: '[REDACTED]',

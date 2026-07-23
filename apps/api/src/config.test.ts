@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ConfigurationError, loadConfig } from './config.js';
 
 const minimumEnvironment = {
-  DATABASE_URL: 'postgres://localhost/openflow',
+  DATABASE_URL: 'postgres://localhost/outtrace',
   REDIS_URL: 'redis://localhost:6379',
 };
 
@@ -21,7 +21,7 @@ describe('loadConfig', () => {
   });
 
   it('requires every development seed value when seeding is enabled', () => {
-    expect(() => loadConfig({ ...minimumEnvironment, OPENFLOW_SEED_DEVELOPMENT: 'true' })).toThrow(
+    expect(() => loadConfig({ ...minimumEnvironment, OUTTRACE_SEED_DEVELOPMENT: 'true' })).toThrow(
       ConfigurationError,
     );
   });
@@ -43,7 +43,7 @@ describe('loadConfig', () => {
         DEV_PROCESS_KEY: 'onboarding',
         DEV_WORKSPACE_ID: 'workspace_1',
         NODE_ENV: 'production',
-        OPENFLOW_SEED_DEVELOPMENT: 'true',
+        OUTTRACE_SEED_DEVELOPMENT: 'true',
       }),
     ).toThrow(ConfigurationError);
   });

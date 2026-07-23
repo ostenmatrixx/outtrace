@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 const invalidCredentialHash = createHash('sha256')
-  .update('openflow-invalid-credential-sentinel')
+  .update('outtrace-invalid-credential-sentinel')
   .digest();
 
 export function sha256Hex(value: string): string {

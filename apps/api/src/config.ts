@@ -25,7 +25,7 @@ const configSchema = z
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),
-    OPENFLOW_SEED_DEVELOPMENT: booleanFromEnvironment,
+    OUTTRACE_SEED_DEVELOPMENT: booleanFromEnvironment,
     DEV_INGESTION_KEY_ID: z.string().min(1).optional(),
     DEV_INGESTION_KEY: z.string().min(1).optional(),
     DEV_WORKSPACE_ID: z.string().min(1).optional(),
@@ -34,15 +34,15 @@ const configSchema = z
     DEV_PROCESS_KEY: z.string().min(1).optional(),
   })
   .superRefine((environment, context) => {
-    if (!environment.OPENFLOW_SEED_DEVELOPMENT) {
+    if (!environment.OUTTRACE_SEED_DEVELOPMENT) {
       return;
     }
 
     if (environment.NODE_ENV === 'production') {
       context.addIssue({
         code: 'custom',
-        message: 'OPENFLOW_SEED_DEVELOPMENT cannot be enabled in production',
-        path: ['OPENFLOW_SEED_DEVELOPMENT'],
+        message: 'OUTTRACE_SEED_DEVELOPMENT cannot be enabled in production',
+        path: ['OUTTRACE_SEED_DEVELOPMENT'],
       });
     }
 
@@ -59,7 +59,7 @@ const configSchema = z
       if (!environment[key]) {
         context.addIssue({
           code: 'custom',
-          message: `${key} is required when OPENFLOW_SEED_DEVELOPMENT=true`,
+          message: `${key} is required when OUTTRACE_SEED_DEVELOPMENT=true`,
           path: [key],
         });
       }
@@ -106,7 +106,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
   }
 
   const value = result.data;
-  const developmentSeed = value.OPENFLOW_SEED_DEVELOPMENT
+  const developmentSeed = value.OUTTRACE_SEED_DEVELOPMENT
     ? {
         clientId: value.DEV_CLIENT_ID!,
         ingestionKey: value.DEV_INGESTION_KEY!,

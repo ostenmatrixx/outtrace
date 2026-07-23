@@ -4,7 +4,7 @@ import type { RedisConnection } from './redis.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
-    openflow: {
+    outtrace: {
       eventRateLimitMax: number;
       pool: pg.Pool;
       redis: RedisConnection;
@@ -12,6 +12,6 @@ declare module 'fastify' {
   }
 
   interface FastifyRequest {
-    openflowWorkspaceId?: string;
+    outtraceWorkspaceId?: string;
   }
 }

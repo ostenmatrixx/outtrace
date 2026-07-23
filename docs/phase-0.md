@@ -2,7 +2,7 @@
 
 ## Workspace inspection
 
-The repository started with only `OPENFLOW_PRD.md`, no `AGENTS.md`, no commits, and no existing
+The repository started with only `OUTTRACE_PRD.md`, no `AGENTS.md`, no commits, and no existing
 implementation. The PRD is preserved as the product source of truth.
 
 ## Phase 1 architecture

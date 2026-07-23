@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { IngestEvent, IngestEventResponse } from '@openflow/contracts';
+import type { IngestEvent, IngestEventResponse } from '@outtrace/contracts';
 import type pg from 'pg';
 
 import { databaseFailure, HttpError } from './errors.js';

@@ -1,4 +1,4 @@
-import { incidentEvaluationJobSchema, type IncidentEvaluationJob } from '@openflow/contracts';
+import { incidentEvaluationJobSchema, type IncidentEvaluationJob } from '@outtrace/contracts';
 
 export interface IncidentEvaluationResult {
   evaluated: false;

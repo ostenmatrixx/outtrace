@@ -13,7 +13,7 @@ const testDatabaseUrl = process.env.TEST_DATABASE_URL;
 if (!testDatabaseUrl) {
   throw new Error('TEST_DATABASE_URL is required for the PostgreSQL integration suite.');
 }
-const schemaName = `openflow_api_${process.pid}_${randomBytes(5).toString('hex')}`;
+const schemaName = `outtrace_api_${process.pid}_${randomBytes(5).toString('hex')}`;
 
 const workspaceOne = {
   id: 'ws_integration_one',
@@ -55,10 +55,10 @@ async function postEvent(
 ) {
   const headers: Record<string, string> = {};
   if (credentials.key !== undefined) {
-    headers['x-openflow-key'] = credentials.key;
+    headers['x-outtrace-key'] = credentials.key;
   }
   if (credentials.keyId !== undefined) {
-    headers['x-openflow-key-id'] = credentials.keyId;
+    headers['x-outtrace-key-id'] = credentials.keyId;
   }
 
   return app.inject({
@@ -95,7 +95,7 @@ async function seedWorkspace(
   );
 }
 
-describe('OpenFlow API PostgreSQL integration', () => {
+describe('Outtrace API PostgreSQL integration', () => {
   beforeAll(async () => {
     adminPool = new Pool({ connectionString: testDatabaseUrl });
     await adminPool.query(`CREATE SCHEMA "${schemaName}"`);
@@ -516,7 +516,7 @@ describe('OpenFlow API PostgreSQL integration', () => {
         postgres: { status: 'up' },
         redis: { status: 'up' },
       },
-      service: 'openflow-api',
+      service: 'outtrace-api',
       status: 'ok',
     });
   });

@@ -1,4 +1,4 @@
-import type { HealthResponse } from '@openflow/contracts';
+import type { HealthResponse } from '@outtrace/contracts';
 import type { FastifyInstance } from 'fastify';
 
 async function dependencyStatus(check: () => Promise<unknown>): Promise<'up' | 'down'> {
@@ -27,8 +27,8 @@ async function dependencyStatus(check: () => Promise<unknown>): Promise<'up' | '
 export async function registerHealthRoute(app: FastifyInstance): Promise<void> {
   app.get('/health', async (): Promise<HealthResponse> => {
     const [postgres, redis] = await Promise.all([
-      dependencyStatus(() => app.openflow.pool.query('SELECT 1')),
-      dependencyStatus(() => app.openflow.redis.ping()),
+      dependencyStatus(() => app.outtrace.pool.query('SELECT 1')),
+      dependencyStatus(() => app.outtrace.redis.ping()),
     ]);
 
     return {
@@ -36,7 +36,7 @@ export async function registerHealthRoute(app: FastifyInstance): Promise<void> {
         postgres: { status: postgres },
         redis: { status: redis },
       },
-      service: 'openflow-api',
+      service: 'outtrace-api',
       status: postgres === 'up' && redis === 'up' ? 'ok' : 'degraded',
     };
   });

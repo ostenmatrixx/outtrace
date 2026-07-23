@@ -1,4 +1,4 @@
-import { INCIDENT_EVALUATION_QUEUE, type IncidentEvaluationJob } from '@openflow/contracts';
+import { INCIDENT_EVALUATION_QUEUE, type IncidentEvaluationJob } from '@outtrace/contracts';
 import { Worker, type Job } from 'bullmq';
 
 import type { WorkerConfig } from './config.js';

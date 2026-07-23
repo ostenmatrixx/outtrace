@@ -1,7 +1,7 @@
-# OpenFlow
+# Outtrace
 
-OpenFlow is a cross-platform business-process observability product for automation agencies. Phase
-1 implements the first complete telemetry path:
+Outtrace is an open-source, cross-platform business-process observability product for automation
+agencies. Phase 1 implements the first complete telemetry path:
 
 ```text
 n8n / Make / custom service
@@ -45,7 +45,7 @@ part of this milestone.
    npm run db:migrate
    ```
 
-   The checked-in example sets `OPENFLOW_SEED_DEVELOPMENT=true` and uses a public, local-only test
+   The checked-in example sets `OUTTRACE_SEED_DEVELOPMENT=true` and uses a public, local-only test
    secret. The API refuses this seed when `NODE_ENV=production`. Never reuse the example secret.
 
 4. Start the API, worker, and dashboard together.
@@ -67,8 +67,8 @@ With the values from `.env.example`:
 ```bash
 curl --request POST http://localhost:3000/v1/events \
   --header 'content-type: application/json' \
-  --header 'x-openflow-key-id: dev_local' \
-  --header 'x-openflow-key: openflow_dev_ingestion_key' \
+  --header 'x-outtrace-key-id: dev_local' \
+  --header 'x-outtrace-key: outtrace_dev_ingestion_key' \
   --data '{
     "eventId": "evt_01JZ5A8W9TQXM2YF7K3N6R4P1C",
     "processKey": "client-onboarding",
@@ -157,7 +157,7 @@ compiled into browser code and must never contain credentials.
 | `API_HOST`, `API_PORT`                              | API               | `127.0.0.1`, `3000`              | Listen address and port                         |
 | `API_CORS_ORIGIN`                                   | API               | `http://localhost:5173`          | Must exactly match the dashboard origin         |
 | `LOG_LEVEL`                                         | API               | `info`                           | Fastify log level                               |
-| `OPENFLOW_SEED_DEVELOPMENT`                         | Migrations        | `false` in code                  | Enables the local-only seed                     |
+| `OUTTRACE_SEED_DEVELOPMENT`                         | Migrations        | `false` in code                  | Enables the local-only seed                     |
 | `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`         | Seed              | Required when seed enabled       | Public example values are local-only            |
 | `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                 | Seed              | Required when seed enabled       | Stable local identifiers                        |
 | `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                 | Seed              | Required when seed enabled       | Stable local process                            |
@@ -203,8 +203,8 @@ values, invalid execution URLs, and unknown metadata fields are discarded.
 
 ## Authentication and tenant isolation
 
-Clients send a non-secret key identifier in `x-openflow-key-id` and its secret in
-`x-openflow-key`. PostgreSQL stores only the SHA-256 secret hash. The API hashes the presented
+Clients send a non-secret key identifier in `x-outtrace-key-id` and its secret in
+`x-outtrace-key`. PostgreSQL stores only the SHA-256 secret hash. The API hashes the presented
 secret and performs constant-time comparison.
 
 Authentication resolves the workspace before process lookup. Process lookup, event idempotency, and
@@ -283,7 +283,7 @@ deliberate: durable queue delivery and incident rules will be designed together 
 
 ### Authentication fails locally
 
-Confirm that `OPENFLOW_SEED_DEVELOPMENT=true` was set when `npm run db:migrate` ran and that both
+Confirm that `OUTTRACE_SEED_DEVELOPMENT=true` was set when `npm run db:migrate` ran and that both
 headers match `DEV_INGESTION_KEY_ID` and `DEV_INGESTION_KEY`. Rerunning migrations is safe.
 
 ### The process is unknown
@@ -328,4 +328,4 @@ public local-development value.
 
 - [Phase 0 engineering brief](docs/phase-0.md)
 - [ADR 0001: Phase 1 foundation and ingestion boundaries](docs/architecture/0001-phase-1-foundation.md)
-- [Product requirements](OPENFLOW_PRD.md)
+- [Product requirements](OUTTRACE_PRD.md)

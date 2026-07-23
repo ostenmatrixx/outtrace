@@ -75,7 +75,7 @@ export function serializeLog(
   return JSON.stringify({
     timestamp: now().toISOString(),
     level,
-    service: 'openflow-worker',
+    service: 'outtrace-worker',
     event,
     ...safeContext,
   });

@@ -111,7 +111,7 @@ function ShellNavigation() {
           OF
         </span>
         <div>
-          <span className="brand__name">OpenFlow</span>
+          <span className="brand__name">Outtrace</span>
           <span className="brand__descriptor">Process operations</span>
         </div>
       </div>
