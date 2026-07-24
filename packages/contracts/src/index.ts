@@ -1,3 +1,4 @@
+export * from './agency.js';
 export * from './errors.js';
 export * from './event.js';
 export * from './health.js';

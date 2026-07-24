@@ -5,12 +5,16 @@ import {
   incidentStatusUpdateSchema,
   incidentTypes,
 } from '@outtrace/contracts';
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
-import { authenticateOperator, readOperatorCredentials } from '../authentication.js';
 import { HttpError } from '../errors.js';
 import { addIncidentNote, getIncident, listIncidents, updateIncident } from '../incident-store.js';
+import {
+  authenticateOperatorRequest,
+  requireClientAccess,
+  requireRole,
+} from '../operator-access.js';
 
 const querySchema = z.object({
   clientId: z.string().min(1).optional(),
@@ -26,13 +30,6 @@ const paramsSchema = z.object({
   incidentId: z.string().min(1).max(200),
 });
 
-async function authenticate(request: FastifyRequest, app: FastifyInstance): Promise<void> {
-  request.outtraceWorkspaceId = await authenticateOperator(
-    app.outtrace.pool,
-    readOperatorCredentials(request),
-  );
-}
-
 function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success) {
@@ -46,59 +43,73 @@ function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
   return parsed.data;
 }
 
-function actor(request: FastifyRequest): string {
-  const value = request.headers['x-outtrace-operator-name'];
-  return typeof value === 'string' && value.trim() ? value.trim().slice(0, 120) : 'operator';
-}
-
 export async function registerIncidentRoutes(app: FastifyInstance): Promise<void> {
   app.get(
     '/v1/incidents',
-    { preHandler: (request) => authenticate(request, app) },
+    { preHandler: (request) => authenticateOperatorRequest(request, app) },
     async (request) =>
-      listIncidents(
-        app.outtrace.pool,
-        request.outtraceWorkspaceId!,
-        parseOrThrow(querySchema, request.query),
-      ),
+      listIncidents(app.outtrace.pool, request.outtraceWorkspaceId!, {
+        ...parseOrThrow(querySchema, request.query),
+        clientIds: request.outtraceOperator!.clientIds,
+      }),
   );
 
   app.get(
     '/v1/incidents/:incidentId',
-    { preHandler: (request) => authenticate(request, app) },
+    { preHandler: (request) => authenticateOperatorRequest(request, app) },
     async (request) => {
       const { incidentId } = parseOrThrow(paramsSchema, request.params);
-      return getIncident(app.outtrace.pool, request.outtraceWorkspaceId!, incidentId);
+      const incident = await getIncident(
+        app.outtrace.pool,
+        request.outtraceWorkspaceId!,
+        incidentId,
+      );
+      requireClientAccess(request.outtraceOperator!, incident.client.id);
+      return incident;
     },
   );
 
   app.patch(
     '/v1/incidents/:incidentId',
-    { preHandler: (request) => authenticate(request, app) },
+    { preHandler: (request) => authenticateOperatorRequest(request, app) },
     async (request) => {
+      requireRole(request.outtraceOperator!, ['owner', 'operator']);
       const { incidentId } = parseOrThrow(paramsSchema, request.params);
+      const existing = await getIncident(
+        app.outtrace.pool,
+        request.outtraceWorkspaceId!,
+        incidentId,
+      );
+      requireClientAccess(request.outtraceOperator!, existing.client.id);
       const update = parseOrThrow(incidentStatusUpdateSchema, request.body);
       return updateIncident(
         app.outtrace.pool,
         request.outtraceWorkspaceId!,
         incidentId,
         update,
-        actor(request),
+        request.outtraceOperator!.name,
       );
     },
   );
 
   app.post(
     '/v1/incidents/:incidentId/notes',
-    { preHandler: (request) => authenticate(request, app) },
+    { preHandler: (request) => authenticateOperatorRequest(request, app) },
     async (request, reply) => {
+      requireRole(request.outtraceOperator!, ['owner', 'operator']);
       const { incidentId } = parseOrThrow(paramsSchema, request.params);
+      const existing = await getIncident(
+        app.outtrace.pool,
+        request.outtraceWorkspaceId!,
+        incidentId,
+      );
+      requireClientAccess(request.outtraceOperator!, existing.client.id);
       const note = parseOrThrow(incidentNoteCreateSchema, request.body);
       const incident = await addIncidentNote(
         app.outtrace.pool,
         request.outtraceWorkspaceId!,
         incidentId,
-        note,
+        { ...note, author: request.outtraceOperator!.name },
       );
       return reply.code(201).send(incident);
     },

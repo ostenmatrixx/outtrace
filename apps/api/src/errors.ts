@@ -53,3 +53,18 @@ export function databaseFailure(): HttpError {
     'The database operation failed. Please retry safely.',
   );
 }
+
+export function authorizationForbidden(): HttpError {
+  return new HttpError(403, 'AUTHORIZATION_FORBIDDEN', 'This operator cannot perform that action.');
+}
+
+export function resourceNotFound(
+  code: 'CLIENT_NOT_FOUND' | 'MEMBER_NOT_FOUND' | 'PROCESS_NOT_FOUND',
+  label: string,
+): HttpError {
+  return new HttpError(404, code, `The ${label} does not exist.`);
+}
+
+export function resourceConflict(message: string): HttpError {
+  return new HttpError(409, 'RESOURCE_CONFLICT', message);
+}

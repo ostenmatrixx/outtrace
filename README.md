@@ -1,7 +1,8 @@
 # Outtrace
 
 Outtrace is an open-source, cross-platform business-process observability product for automation
-agencies. Phase 2 turns the telemetry foundation into an operational incident workflow:
+agencies. Phase 3 adds agency-safe client separation, role-based access, reporting, and retention
+controls to the incident workflow:
 
 ```text
 n8n / Make / custom service
@@ -11,11 +12,13 @@ n8n / Make / custom service
   → retryable BullMQ incident evaluation
   → failure / missing-stage / SLA / sequence detection
   → authenticated incident inbox + optional Slack alert
+  → client-scoped reports and role-aware agency administration
 ```
 
 Incidents are correlated to the affected client, process, instance, stage, source execution, and
-cross-platform event timeline. Operators can filter, assign, acknowledge, annotate, and resolve
-them from the dashboard.
+cross-platform event timeline. Owners administer clients, members, process data policies, and
+retention. Operators manage incidents across the workspace. Viewers receive read-only access to
+only their assigned clients.
 
 ## Requirements
 
@@ -62,8 +65,9 @@ them from the dashboard.
    - API health: `http://localhost:3000/health`
    - Dashboard: the Vite URL printed in the terminal, normally `http://localhost:5173`
 
-   Open the incident inbox with `DEV_OPERATOR_KEY_ID` and `DEV_OPERATOR_KEY`. The dashboard keeps
-   these credentials in the current browser tab only; they are never compiled into its bundle.
+   Open the dashboard with `DEV_OPERATOR_KEY_ID` and `DEV_OPERATOR_KEY`. The development seed
+   creates a workspace owner with this credential. The dashboard keeps credentials in the current
+   browser tab only; they are never compiled into its bundle.
 
 ## Send a test event
 
@@ -134,7 +138,7 @@ returns the same process-instance ID.
 | `npm test`                 | Run unit tests                                             |
 | `npm run test:integration` | Run PostgreSQL integration tests                           |
 | `npm run build`            | Build contracts and all applications                       |
-| `npm run verify`           | Run the complete Phase 2 quality suite                     |
+| `npm run verify`           | Run the complete Phase 3 quality suite                     |
 
 The integration command loads `TEST_DATABASE_URL` from the root `.env` and fails if it is missing
 or unreachable. It creates a random PostgreSQL schema, migrates and tests inside it, then removes
@@ -147,8 +151,9 @@ and updates the seeded credential hash.
 
 ## Environment reference
 
-Only `DEV_INGESTION_KEY` and `POSTGRES_PASSWORD` are secrets. Variables prefixed with `VITE_` are
-compiled into browser code and must never contain credentials.
+`DEV_INGESTION_KEY`, `DEV_OPERATOR_KEY`, generated member access keys, and database passwords are
+secrets. Variables prefixed with `VITE_` are compiled into browser code and must never contain
+credentials.
 
 | Variable                                            | Consumer          | Required/default                 | Notes                                           |
 | --------------------------------------------------- | ----------------- | -------------------------------- | ----------------------------------------------- |
@@ -173,6 +178,7 @@ compiled into browser code and must never contain credentials.
 | `REDIS_CONNECT_TIMEOUT_MS`                          | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                |
 | `PHASE_2_POLL_INTERVAL_MS`                          | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval    |
 | `PHASE_2_SWEEP_INTERVAL_MS`                         | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval            |
+| `RETENTION_SWEEP_INTERVAL_MS`                       | Worker            | `3600000`, range 60000–86400000  | Expired event cleanup interval                  |
 | `SLACK_WEBHOOK_URL`                                 | Worker            | Optional HTTPS URL               | Secret incoming webhook; configure outside Git  |
 | `SLACK_MINIMUM_SEVERITY`                            | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`          |
 | `DASHBOARD_BASE_URL`                                | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links       |
@@ -184,7 +190,7 @@ compiled into browser code and must never contain credentials.
 apps/
   api/        Fastify ingestion API, migration runner, and persistence service
   worker/     BullMQ evaluation worker, deadline sweeper, and Slack delivery
-  dashboard/  React/Vite health view and authenticated incident operations
+  dashboard/  React/Vite incident and agency operations workspace
 packages/
   contracts/  Shared Zod request, response, health, error, and queue contracts
 database/
@@ -198,7 +204,7 @@ docs/
 The shared contract accepts the initial sources `n8n`, `make`, and `custom`, and statuses `started`,
 `completed`, and `failed`. Unknown top-level fields are stripped.
 
-Only these metadata fields are eligible for persistence:
+Each process owns its metadata allowlist. The development process starts with these eligible fields:
 
 - `clientId`
 - `executionId`
@@ -207,12 +213,13 @@ Only these metadata fields are eligible for persistence:
 - `environment`
 - `region`
 
-Sensitive keys are recursively replaced before the allowlist is applied. Matching is
+Owners can change that allowlist from the dashboard, up to 32 operational keys per process.
+Sensitive keys are recursively replaced before the process allowlist is applied. Matching is
 case-insensitive for password, passwd, token, secret, authorization, apiKey, api_key, cookie, and
 session. Persisted allowlisted values are bounded operational strings; arrays, objects, oversized
 values, invalid execution URLs, and unknown metadata fields are discarded.
 
-## Authentication and tenant isolation
+## Authentication, roles, and tenant isolation
 
 Clients send a non-secret key identifier in `x-outtrace-key-id` and its secret in
 `x-outtrace-key`. PostgreSQL stores only the SHA-256 secret hash. The API hashes the presented
@@ -229,6 +236,17 @@ echoing the identifier.
 Never place an ingestion key in `VITE_*` variables or dashboard source. Variables prefixed with
 `VITE_` are compiled into browser assets.
 
+Dashboard requests use a separate member access key. Only a key identifier and SHA-256 secret hash
+are stored. The invitation response reveals the generated secret once. The roles are:
+
+- `owner`: administer clients, members, process policies, retention, reports, and incidents;
+- `operator`: operate incidents and view all workspace clients and reports; and
+- `viewer`: read incidents and reports only for explicitly assigned clients.
+
+The API enforces role and client access on every route. Hiding controls in the dashboard is a
+usability measure, not the security boundary. The legacy development operator credential resolves
+as the seeded owner so existing local setups can migrate without losing access.
+
 ## Persistence guarantees
 
 - `(process_id, instance_key)` is unique, so correlated events share one process instance even under
@@ -242,19 +260,21 @@ Never place an ingestion key in `VITE_*` variables or dashboard source. Variable
 
 ## API responses
 
-| HTTP  | Code or response          | Meaning                                                 |
-| ----- | ------------------------- | ------------------------------------------------------- |
-| `202` | ingestion response        | A new event was accepted                                |
-| `200` | ingestion response        | A duplicate was accepted idempotently                   |
-| `200` | health response           | Health is `ok` or `degraded`; inspect dependency states |
-| `400` | `INVALID_PAYLOAD`         | Malformed JSON, invalid contract, or unsupported source |
-| `400` | `UNSUPPORTED_STATUS`      | Status is not `started`, `completed`, or `failed`       |
-| `401` | `AUTHENTICATION_REQUIRED` | One or both ingestion headers are missing               |
-| `401` | `AUTHENTICATION_INVALID`  | The key identifier or secret is invalid                 |
-| `404` | `UNKNOWN_PROCESS`         | Process key is absent from the authenticated workspace  |
-| `429` | rate-limit error          | Too many ingestion attempts; retry later                |
-| `503` | `DATABASE_FAILURE`        | Persistence failed; retry with the same `eventId`       |
-| `500` | `INTERNAL_ERROR`          | Safe unexpected-error response                          |
+| HTTP  | Code or response          | Meaning                                                  |
+| ----- | ------------------------- | -------------------------------------------------------- |
+| `202` | ingestion response        | A new event was accepted                                 |
+| `200` | ingestion response        | A duplicate was accepted idempotently                    |
+| `200` | health response           | Health is `ok` or `degraded`; inspect dependency states  |
+| `400` | `INVALID_PAYLOAD`         | Malformed JSON, invalid contract, or unsupported source  |
+| `400` | `UNSUPPORTED_STATUS`      | Status is not `started`, `completed`, or `failed`        |
+| `401` | `AUTHENTICATION_REQUIRED` | One or both ingestion headers are missing                |
+| `401` | `AUTHENTICATION_INVALID`  | The key identifier or secret is invalid                  |
+| `403` | `AUTHORIZATION_FORBIDDEN` | The role or client assignment does not permit the action |
+| `404` | `UNKNOWN_PROCESS`         | Process key is absent from the authenticated workspace   |
+| `409` | `RESOURCE_CONFLICT`       | The requested workspace change violates a constraint     |
+| `429` | rate-limit error          | Too many ingestion attempts; retry later                 |
+| `503` | `DATABASE_FAILURE`        | Persistence failed; retry with the same `eventId`        |
+| `500` | `INTERNAL_ERROR`          | Safe unexpected-error response                           |
 
 Errors use one envelope:
 
@@ -309,15 +329,40 @@ are always scoped to the authenticated workspace.
 List filters include `status`, `severity`, `type`, `clientId`, `processId`, and `source`. Assignment,
 status changes, automatic lifecycle changes, and notes produce tenant-scoped audit records.
 
-## Phase 2 boundaries
+## Agency API
 
-- The development seed creates one process and stage definition; a process-definition management
-  UI is still pending.
-- Operator keys provide a secure tenant boundary, but user accounts, invitations, and roles begin
-  in Phase 3.
+All endpoints require the operator/member headers used by the incident API.
+
+| Method  | Endpoint                 | Role/access              | Purpose                               |
+| ------- | ------------------------ | ------------------------ | ------------------------------------- |
+| `GET`   | `/v1/session`            | Any member               | Resolve role and visible client scope |
+| `GET`   | `/v1/clients`            | Any member               | List visible clients                  |
+| `POST`  | `/v1/clients`            | Owner                    | Create a client boundary              |
+| `GET`   | `/v1/clients/:id/report` | Assigned client or above | Read lifetime reliability metrics     |
+| `GET`   | `/v1/members`            | Owner                    | List members and access state         |
+| `POST`  | `/v1/members`            | Owner                    | Invite a member and issue a key once  |
+| `PATCH` | `/v1/members/:id`        | Owner                    | Change role, status, or client access |
+| `GET`   | `/v1/processes`          | Any member               | List processes in visible clients     |
+| `PATCH` | `/v1/processes/:id`      | Owner                    | Assign client and metadata allowlist  |
+| `GET`   | `/v1/workspace/settings` | Owner                    | Read event retention policy           |
+| `PATCH` | `/v1/workspace/settings` | Owner                    | Update event retention policy         |
+
+Client reports include instance completion rate, incident counts, resolved incidents, median
+resolution time, and the most unreliable stage. Owner changes and completed retention runs are
+recorded in `workspace_audit_log`.
+
+## Phase 3 boundaries
+
+- The development seed creates one process and stage definition; a process-definition editor beyond
+  client assignment and metadata policy is still pending.
+- Invitations issue a one-time access key through the API; email delivery, password login, SSO,
+  recovery, and key rotation are not included.
 - Slack is configured per deployment through environment variables. Per-workspace notification
-  settings and client/channel routing remain Phase 3 work.
-- Event retention controls and client reliability reports remain Phase 3 work.
+  settings and client/channel routing remain future work.
+- Client reports are lifetime summaries; date-range filtering and scheduled exports are not yet
+  included.
+- Retention removes expired raw events while preserving incidents, audit records, and summary
+  entities.
 - Compose runs PostgreSQL and Redis only, not application containers.
 - Production deployment, CI, backups/recovery, and hosted secret management are not included.
 
@@ -330,7 +375,8 @@ headers match `DEV_INGESTION_KEY_ID` and `DEV_INGESTION_KEY`. Rerunning migratio
 
 For the incident inbox, use `DEV_OPERATOR_KEY_ID` and `DEV_OPERATOR_KEY`. If an older local database
 was seeded before Phase 2, rerun `npm run db:migrate` to populate the hashed operator credential and
-default stage rules.
+default stage rules. Phase 3 also creates the development owner member during the same idempotent
+seed.
 
 ### The process is unknown
 
@@ -375,4 +421,5 @@ public local-development value.
 - [Phase 0 engineering brief](docs/phase-0.md)
 - [ADR 0001: Phase 1 foundation and ingestion boundaries](docs/architecture/0001-phase-1-foundation.md)
 - [ADR 0002: Durable Phase 2 incident evaluation](docs/architecture/0002-phase-2-incidents.md)
+- [ADR 0003: Phase 3 agency access and data governance](docs/architecture/0003-phase-3-agency-support.md)
 - [Product requirements](OUTTRACE_PRD.md)

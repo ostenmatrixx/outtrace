@@ -7,7 +7,11 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { evaluateProcessInstance } from './incident-engine.js';
-import { deliverSlackNotifications, dispatchEvaluationOutbox } from './phase2-runtime.js';
+import {
+  deliverSlackNotifications,
+  dispatchEvaluationOutbox,
+  enforceEventRetention,
+} from './phase2-runtime.js';
 
 const { Pool } = pg;
 const testDatabaseUrl = process.env.TEST_DATABASE_URL;
@@ -25,6 +29,7 @@ async function migrate(): Promise<void> {
     '001_phase_1_telemetry.sql',
     '002_deterministic_instance_state.sql',
     '003_phase_2_incidents.sql',
+    '004_phase_3_agency_support.sql',
   ]) {
     await pool.query(await readFile(new URL(filename, migrationDirectory), 'utf8'));
   }
@@ -395,5 +400,34 @@ describe('Phase 2 incident engine', () => {
         )
       ).rows,
     ).toEqual([{ status: 'open', notification_version: 2 }]);
+  });
+
+  it('enforces each workspace retention policy and records the deletion', async () => {
+    await pool.query(`UPDATE workspaces SET event_retention_days = 1 WHERE id = 'ws_engine'`);
+    await pool.query(
+      `
+        UPDATE events
+        SET received_at = CASE
+          WHEN id = 'event_account' THEN '2026-07-20T10:00:00Z'::timestamptz
+          ELSE '2026-07-24T09:00:00Z'::timestamptz
+        END
+      `,
+    );
+
+    await expect(enforceEventRetention(pool, new Date('2026-07-24T10:00:00Z'))).resolves.toBe(1);
+    expect((await pool.query(`SELECT id FROM events ORDER BY id`)).rows).toEqual([
+      { id: 'event_welcome_failed' },
+    ]);
+    expect(
+      (
+        await pool.query(
+          `SELECT retention_days, events_deleted FROM retention_runs WHERE workspace_id = 'ws_engine'`,
+        )
+      ).rows,
+    ).toEqual([{ retention_days: 1, events_deleted: 1 }]);
+    expect(
+      (await pool.query(`SELECT action FROM workspace_audit_log WHERE workspace_id = 'ws_engine'`))
+        .rows,
+    ).toEqual([{ action: 'events_retained' }]);
   });
 });

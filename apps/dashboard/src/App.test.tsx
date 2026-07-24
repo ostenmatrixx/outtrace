@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 describe('dashboard shell', () => {
-  it('has an accessible Phase 2 application shell with an incident inbox', async () => {
+  it('has an accessible Phase 3 application shell with agency navigation', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
         status: 'ok',
@@ -38,19 +38,121 @@ describe('dashboard shell', () => {
     render(<App />);
 
     expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Incidents' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByText('Reports').closest('[aria-disabled]')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
+    expect(screen.getByRole('link', { name: 'Agency' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Incidents' })).toHaveAttribute('href', '#incidents');
     expect(screen.getByRole('link', { name: 'Skip to main content' })).toHaveAttribute(
       'href',
       '#main-content',
     );
     expect(
-      screen.getByRole('heading', { name: 'See the broken handoff.', level: 1 }),
+      screen.getByRole('heading', { name: 'One view. Every client.', level: 1 }),
     ).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Open the incident inbox' })).toBeInTheDocument();
+  });
+});
+
+describe('agency operations', () => {
+  it('renders owner controls and a client reliability report', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/health')) {
+        return jsonResponse({
+          status: 'ok',
+          service: 'outtrace-api',
+          dependencies: {
+            postgres: { status: 'up' },
+            redis: { status: 'up' },
+          },
+        });
+      }
+      if (url.includes('/v1/incidents?')) {
+        return jsonResponse({ total: 0, incidents: [] });
+      }
+      if (url.endsWith('/v1/session')) {
+        return jsonResponse({
+          workspaceId: 'workspace_1',
+          memberId: 'member_1',
+          name: 'Mina',
+          role: 'owner',
+          clientIds: null,
+        });
+      }
+      if (url.endsWith('/v1/clients')) {
+        return jsonResponse({
+          clients: [
+            {
+              id: 'client_1',
+              name: 'Acme',
+              processCount: 2,
+              openIncidentCount: 1,
+              createdAt: '2026-07-24T01:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.endsWith('/v1/processes')) {
+        return jsonResponse({
+          processes: [
+            {
+              id: 'process_1',
+              key: 'onboarding',
+              name: 'Client onboarding',
+              clientId: 'client_1',
+              clientName: 'Acme',
+              slaSeconds: 900,
+              metadataAllowlist: ['orderId', 'executionUrl'],
+            },
+          ],
+        });
+      }
+      if (url.endsWith('/v1/members')) {
+        return jsonResponse({
+          members: [
+            {
+              id: 'member_1',
+              name: 'Mina',
+              email: 'mina@example.com',
+              role: 'owner',
+              status: 'active',
+              clientIds: [],
+              createdAt: '2026-07-24T01:00:00.000Z',
+            },
+          ],
+        });
+      }
+      if (url.endsWith('/v1/workspace/settings')) {
+        return jsonResponse({ eventRetentionDays: 30 });
+      }
+      if (url.endsWith('/v1/clients/client_1/report')) {
+        return jsonResponse({
+          client: { id: 'client_1', name: 'Acme' },
+          totalInstances: 10,
+          completedInstances: 9,
+          completionRate: 0.9,
+          incidentsDetected: 2,
+          incidentsResolved: 1,
+          medianResolutionSeconds: 300,
+          mostUnreliableStage: { stage: 'provisioned', incidentCount: 2 },
+        });
+      }
+      return jsonResponse({ error: { message: `Unexpected test request: ${url}` } }, 500);
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    render(<App />);
+    await user.type(screen.getByLabelText('Operator name'), 'Mina');
+    await user.type(screen.getByLabelText('Operator key ID'), 'operator_1');
+    await user.type(screen.getByLabelText('Operator key'), 'secret');
+    await user.click(screen.getByRole('button', { name: 'Open inbox' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Clients, access & reporting' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Workspace administration')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /Acme/ }));
+    expect(await screen.findByText('90%')).toBeInTheDocument();
+    expect(screen.getByText('provisioned · 2')).toBeInTheDocument();
   });
 });
 

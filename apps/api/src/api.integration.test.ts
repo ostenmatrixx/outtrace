@@ -411,12 +411,12 @@ describe('Outtrace API PostgreSQL integration', () => {
     const noted = await app.inject({
       headers: operatorHeaders(),
       method: 'POST',
-      payload: { author: 'Mina', body: 'Retrying the source workflow.' },
+      payload: { author: 'Spoofed author', body: 'Retrying the source workflow.' },
       url: '/v1/incidents/incident_integration/notes',
     });
     expect(noted.statusCode).toBe(201);
     expect(noted.json()).toMatchObject({
-      notes: [{ author: 'Mina', body: 'Retrying the source workflow.' }],
+      notes: [{ author: 'Workspace owner', body: 'Retrying the source workflow.' }],
     });
     expect(
       (
@@ -426,6 +426,151 @@ describe('Outtrace API PostgreSQL integration', () => {
         )
       ).rows.map((row) => row.action),
     ).toEqual(expect.arrayContaining(['acknowledged', 'assigned', 'note_added']));
+  });
+
+  it('enforces Phase 3 roles, client access, metadata allowlists, reports, and retention settings', async () => {
+    const session = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: '/v1/session',
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({
+      workspaceId: workspaceOne.id,
+      role: 'owner',
+      clientIds: null,
+    });
+
+    const createdClient = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { name: 'Restricted client' },
+      url: '/v1/clients',
+    });
+    expect(createdClient.statusCode).toBe(201);
+    const restrictedClientId = createdClient.json().id as string;
+
+    const invited = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: {
+        name: 'Viewer One',
+        email: 'viewer@example.com',
+        role: 'viewer',
+        clientIds: [restrictedClientId],
+      },
+      url: '/v1/members',
+    });
+    expect(invited.statusCode).toBe(201);
+    expect(invited.json()).toMatchObject({
+      member: {
+        role: 'viewer',
+        clientIds: [restrictedClientId],
+      },
+    });
+    const viewerHeaders = {
+      'x-outtrace-operator-key-id': invited.json().accessKeyId as string,
+      'x-outtrace-operator-key': invited.json().accessKey as string,
+    };
+
+    const viewerClients = await app.inject({
+      headers: viewerHeaders,
+      method: 'GET',
+      url: '/v1/clients',
+    });
+    expect(viewerClients.statusCode).toBe(200);
+    expect(viewerClients.json().clients).toEqual([
+      expect.objectContaining({ id: restrictedClientId, name: 'Restricted client' }),
+    ]);
+    expect(
+      (
+        await app.inject({
+          headers: viewerHeaders,
+          method: 'POST',
+          payload: { name: 'Forbidden client' },
+          url: '/v1/clients',
+        })
+      ).statusCode,
+    ).toBe(403);
+    expect(
+      (
+        await app.inject({
+          headers: viewerHeaders,
+          method: 'GET',
+          url: '/v1/clients/client_one/report',
+        })
+      ).statusCode,
+    ).toBe(403);
+
+    const processUpdate = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { metadataAllowlist: ['orderId', 'executionUrl'] },
+      url: '/v1/processes/process_one',
+    });
+    expect(processUpdate.statusCode).toBe(200);
+    expect(processUpdate.json()).toMatchObject({
+      metadataAllowlist: ['orderId', 'executionUrl'],
+    });
+
+    await postEvent(
+      eventPayload({
+        eventId: 'phase-3-allowlist-event',
+        metadata: {
+          clientId: 'discarded-by-process-policy',
+          orderId: 'order_42',
+          executionUrl: 'https://n8n.example.com/execution/phase-3',
+        },
+      }),
+    );
+    expect(
+      (
+        await pool.query<{ metadata: Record<string, string> }>(
+          `SELECT metadata FROM events WHERE external_event_id = 'phase-3-allowlist-event'`,
+        )
+      ).rows[0]?.metadata,
+    ).toEqual({
+      orderId: 'order_42',
+      executionUrl: 'https://n8n.example.com/execution/phase-3',
+    });
+
+    const report = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: '/v1/clients/client_one/report',
+    });
+    expect(report.statusCode).toBe(200);
+    expect(report.json()).toMatchObject({
+      client: { id: 'client_one' },
+      totalInstances: 1,
+      completedInstances: 1,
+      completionRate: 1,
+    });
+
+    const settings = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { eventRetentionDays: 45 },
+      url: '/v1/workspace/settings',
+    });
+    expect(settings.statusCode).toBe(200);
+    expect(settings.json()).toEqual({ eventRetentionDays: 45 });
+
+    expect(
+      (
+        await pool.query<{ action: string }>(
+          `SELECT action FROM workspace_audit_log WHERE workspace_id = $1`,
+          [workspaceOne.id],
+        )
+      ).rows.map((row) => row.action),
+    ).toEqual(
+      expect.arrayContaining([
+        'client_created',
+        'member_invited',
+        'process_updated',
+        'retention_updated',
+      ]),
+    );
   });
 
   it('rolls back a newly correlated instance when event insertion fails', async () => {

@@ -1,6 +1,7 @@
 import type pg from 'pg';
 
 import type { RedisConnection } from './redis.js';
+import type { OperatorPrincipal } from './authentication.js';
 
 declare module 'fastify' {
   interface FastifyInstance {
@@ -13,5 +14,6 @@ declare module 'fastify' {
 
   interface FastifyRequest {
     outtraceWorkspaceId?: string;
+    outtraceOperator?: OperatorPrincipal;
   }
 }
