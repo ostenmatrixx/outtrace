@@ -1,69 +1,133 @@
-import { useEffect } from 'react';
+import { useGSAP } from '@gsap/react';
+import gsap from 'gsap';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+import { useRef, useState } from 'react';
 
-const systemQuestions = [
+gsap.registerPlugin(useGSAP, ScrollTrigger);
+
+const bentoItems = [
   {
-    title: 'Did the process finish?',
-    body: 'Correlate events from separate tools with one business identifier.',
-    tone: 'paper',
+    key: 'correlate',
+    title: 'One identifier across every tool.',
+    body: 'Outtrace joins separate workflow events into one business-level process instance.',
   },
   {
-    title: 'Which stage is missing?',
-    body: 'Detect reported failures, missing stages, SLA violations, and unexpected sequences.',
-    tone: 'signal',
+    key: 'detect',
+    title: 'Find the break in sequence.',
+    body: 'Reported failures, missing stages, SLA violations, and unexpected order are evaluated together.',
   },
   {
-    title: 'Who is affected?',
-    body: 'Translate technical events into client, process, and customer context.',
-    tone: 'ink',
+    key: 'explain',
+    title: 'Technical signal. Business context.',
+    body: 'Every incident names the affected client, process, instance, and stage.',
   },
   {
-    title: 'Who owns the response?',
-    body: 'Assign, acknowledge, resolve, and report from one incident workspace.',
-    tone: 'paper',
+    key: 'respond',
+    title: 'One place to respond.',
+    body: 'Assign, acknowledge, resolve.',
   },
 ] as const;
 
-const processStages = [
-  ['Make', 'Payment received'],
-  ['Custom API', 'Account provisioned'],
-  ['n8n', 'Workspace created'],
-  ['Email', 'Welcome sent'],
-  ['Slack', 'Operations notified'],
+const incidentTypes = [
+  {
+    title: 'Reported failure',
+    body: 'A connected workflow sends a failed event with its source execution attached.',
+  },
+  {
+    title: 'Missing stage',
+    body: 'An expected handoff does not arrive within the time defined for the process.',
+  },
+  {
+    title: 'SLA violation',
+    body: 'The complete business process runs beyond its agreed maximum duration.',
+  },
+  {
+    title: 'Unexpected sequence',
+    body: 'A later stage arrives before a required predecessor has completed.',
+  },
 ] as const;
 
 const architecture = [
   ['Ingest', 'Secure HTTP events from n8n, Make, and custom services.'],
-  ['Correlate', 'Deterministic process instances with idempotent event handling.'],
-  ['Detect', 'Workers evaluate failures, timeouts, and stage order.'],
-  ['Operate', 'A multi-client incident inbox keeps access and response clear.'],
+  ['Correlate', 'Idempotent events resolve into deterministic process instances.'],
+  ['Evaluate', 'Workers detect failures, missing stages, and timing violations.'],
+  ['Operate', 'A multi-client inbox keeps access, ownership, and response clear.'],
 ] as const;
 
+const connectedSystems = ['n8n', 'Make', 'Custom APIs', 'Slack', 'PostgreSQL', 'Redis'];
+
 export function LandingPage() {
-  useEffect(() => {
-    const elements = Array.from(document.querySelectorAll<HTMLElement>('[data-reveal]'));
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      elements.forEach((element) => element.classList.add('is-visible'));
-      return;
-    }
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [activeIncident, setActiveIncident] = useState(0);
 
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('is-visible');
-            observer.unobserve(entry.target);
-          }
+  useGSAP(
+    () => {
+      const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reducedMotion) {
+        gsap.set('[data-enter], .scale-media', { clearProps: 'all' });
+        return;
+      }
+
+      gsap.from('[data-hero-enter]', {
+        opacity: 0,
+        y: 24,
+        duration: 0.8,
+        stagger: 0.08,
+        ease: 'power3.out',
+      });
+
+      gsap.fromTo(
+        '.hero__art',
+        { opacity: 0, scale: 0.88 },
+        { opacity: 1, scale: 1, duration: 1.1, ease: 'power3.out' },
+      );
+
+      gsap.utils.toArray<HTMLElement>('[data-enter]').forEach((element) => {
+        gsap.from(element, {
+          opacity: 0,
+          y: 18,
+          duration: 0.7,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: element,
+            start: 'top 86%',
+            once: true,
+          },
         });
-      },
-      { threshold: 0.16 },
-    );
+      });
 
-    elements.forEach((element) => observer.observe(element));
-    return () => observer.disconnect();
-  }, []);
+      gsap.utils.toArray<HTMLElement>('.scale-media').forEach((element) => {
+        gsap
+          .timeline({
+            scrollTrigger: {
+              trigger: element,
+              start: 'top bottom',
+              end: 'bottom top',
+              scrub: 1,
+            },
+          })
+          .fromTo(element, { scale: 0.8, opacity: 0.25 }, { scale: 1, opacity: 1 })
+          .to(element, { scale: 0.96, opacity: 0.2 });
+      });
+
+      const media = gsap.matchMedia();
+      media.add('(min-width: 1001px)', () => {
+        ScrollTrigger.create({
+          trigger: '.desire',
+          start: 'top top',
+          end: 'bottom bottom',
+          pin: '.desire__sticky',
+          pinSpacing: false,
+        });
+      });
+
+      return () => media.revert();
+    },
+    { scope: rootRef },
+  );
 
   return (
-    <div className="landing">
+    <div className="landing" ref={rootRef}>
       <a className="landing__skip" href="#main">
         Skip to content
       </a>
@@ -76,8 +140,8 @@ export function LandingPage() {
           <span>Outtrace</span>
         </a>
         <nav className="site-nav" aria-label="Portfolio case study">
-          <a href="#problem">Problem</a>
           <a href="#system">System</a>
+          <a href="#incidents">Incidents</a>
           <a href="#architecture">Architecture</a>
         </nav>
         <a
@@ -93,15 +157,14 @@ export function LandingPage() {
       <main id="main">
         <section className="hero" id="top">
           <div className="hero__copy">
-            <p className="eyebrow">Cross-platform process monitoring</p>
-            <h1>Catch process failures.</h1>
-            <p className="hero__intro">
-              Outtrace turns scattered workflow events into business-level incidents your agency can
-              act on.
+            <h1 data-hero-enter>Every workflow. One operational truth.</h1>
+            <p className="hero__intro" data-hero-enter>
+              Outtrace connects scattered automation events into one incident view your agency can
+              understand and act on.
             </p>
-            <div className="hero__actions">
+            <div className="hero__actions" data-hero-enter>
               <a className="button button--primary" href="#system">
-                View the system
+                See how it works
               </a>
               <a
                 className="button button--secondary"
@@ -116,7 +179,7 @@ export function LandingPage() {
           <figure className="hero__art">
             <img
               src="/assets/outtrace-trace-field.jpg"
-              alt="Abstract process traces converging into one clear operational timeline"
+              alt="Monochrome process traces converging into one operational timeline"
               width="1456"
               height="1092"
               fetchPriority="high"
@@ -130,7 +193,7 @@ export function LandingPage() {
             <dd>Outtrace MVP</dd>
           </div>
           <div>
-            <dt>Focus</dt>
+            <dt>Role</dt>
             <dd>Product design and engineering</dd>
           </div>
           <div>
@@ -138,118 +201,133 @@ export function LandingPage() {
             <dd>Automation agencies</dd>
           </div>
           <div>
-            <dt>Year</dt>
-            <dd>2026</dd>
+            <dt>Scope</dt>
+            <dd>Event contract to incident response</dd>
           </div>
         </dl>
 
-        <section className="problem section-shell" id="problem" data-reveal>
-          <div className="section-heading">
-            <h2>Platform logs show executions. Agencies need the full story.</h2>
-            <p>
-              A client onboarding can cross five systems. Each tool sees its own step, but none can
-              confirm that the business process finished.
-            </p>
-          </div>
-          <div className="problem__body">
-            <figure className="problem__art">
-              <img
-                src="/assets/outtrace-missing-stage.jpg"
-                alt="A process sequence with one visibly missing stage"
-                width="1254"
-                height="1254"
-                loading="lazy"
-              />
-            </figure>
-            <blockquote>
-              <p>
-                The failure is often discovered when the client asks why their customer is still
-                waiting.
-              </p>
-              <footer>Product problem</footer>
-            </blockquote>
-          </div>
-        </section>
-
-        <section className="process section-shell" aria-labelledby="process-title" data-reveal>
-          <div>
-            <h2 id="process-title">One process can span every tool.</h2>
-            <p>
-              Outtrace follows the business identifier across platforms, then evaluates the whole
-              sequence.
-            </p>
-          </div>
-          <ol className="process__track">
-            {processStages.map(([source, stage], index) => (
-              <li key={stage} style={{ '--stage-index': index } as React.CSSProperties}>
-                <span>{source}</span>
-                <strong>{stage}</strong>
-              </li>
+        <section className="systems-marquee" aria-label="Connected systems">
+          <div className="systems-marquee__track">
+            {[...connectedSystems, ...connectedSystems].map((system, index) => (
+              <span key={`${system}-${index}`}>{system}</span>
             ))}
-          </ol>
+          </div>
         </section>
 
-        <section className="system section-shell" id="system" data-reveal>
-          <div className="section-heading section-heading--narrow">
-            <h2>Designed around the operator’s next question.</h2>
+        <section className="interest section-shell" id="system">
+          <div className="section-heading" data-enter>
+            <h2>
+              See every
+              <span
+                className="inline-visual"
+                role="img"
+                aria-label="process trace"
+                style={{ backgroundImage: 'url(/assets/outtrace-missing-stage.jpg)' }}
+              />
+              handoff.
+            </h2>
             <p>
-              The product turns telemetry into four concrete answers, without collecting complete
-              customer payloads.
+              Platform logs describe individual executions. Outtrace follows the business process
+              across all of them.
             </p>
           </div>
-          <div className="system-grid">
-            {systemQuestions.map((item, index) => (
-              <article
-                className={`system-card system-card--${item.tone}`}
-                key={item.title}
-                style={{ '--card-index': index } as React.CSSProperties}
-              >
-                <span className="system-card__number" aria-hidden="true">
-                  0{index + 1}
-                </span>
-                <h3>{item.title}</h3>
-                <p>{item.body}</p>
+
+          <div className="bento-grid" data-enter>
+            {bentoItems.map((item) => (
+              <article className={`bento-card bento-card--${item.key}`} key={item.key}>
+                {item.key === 'correlate' ? (
+                  <figure className="bento-card__media">
+                    <img
+                      src="/assets/outtrace-trace-field.jpg"
+                      alt=""
+                      width="1456"
+                      height="1092"
+                      loading="lazy"
+                    />
+                  </figure>
+                ) : null}
+                <div className="bento-card__copy">
+                  <h3>{item.title}</h3>
+                  <p>{item.body}</p>
+                </div>
               </article>
             ))}
           </div>
         </section>
 
-        <section className="architecture section-shell" id="architecture" data-reveal>
-          <div className="architecture__lead">
-            <h2>A small system with deliberate boundaries.</h2>
-            <p>
-              Outtrace observes and explains. It does not execute workflows, retry external actions,
-              or store full payloads by default.
-            </p>
-            <a
-              className="text-link"
-              href="https://github.com/ostenmatrixx/outtrace"
-              target="_blank"
-              rel="noreferrer"
-            >
-              View source
-            </a>
+        <section className="incident-section section-shell" id="incidents">
+          <div className="section-heading section-heading--compact" data-enter>
+            <h2>Four ways a process can fail.</h2>
+            <p>Each incident type answers a different operational question.</p>
           </div>
-          <ol className="architecture__list">
-            {architecture.map(([title, body], index) => (
-              <li key={title}>
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <div>
-                  <h3>{title}</h3>
-                  <p>{body}</p>
+
+          <div className="incident-accordion" data-enter>
+            {incidentTypes.map((incident, index) => (
+              <article
+                className="incident-panel"
+                data-active={activeIncident === index}
+                key={incident.title}
+              >
+                <button
+                  type="button"
+                  aria-expanded={activeIncident === index}
+                  onClick={() => setActiveIncident(index)}
+                  onFocus={() => setActiveIncident(index)}
+                  onMouseEnter={() => setActiveIncident(index)}
+                >
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <strong>{incident.title}</strong>
+                </button>
+                <div className="incident-panel__body">
+                  <p>{incident.body}</p>
                 </div>
-              </li>
+              </article>
             ))}
-          </ol>
+          </div>
         </section>
 
-        <section className="closing section-shell" data-reveal>
+        <section className="desire section-shell" id="architecture">
+          <div className="desire__sticky">
+            <h2>A small system with clear boundaries.</h2>
+            <p>
+              Outtrace observes and explains. It does not execute workflows, retry external actions,
+              or collect full payloads by default.
+            </p>
+          </div>
+
+          <div className="desire__story">
+            <figure className="desire__media scale-media">
+              <img
+                src="/assets/outtrace-missing-stage.jpg"
+                alt="Monochrome sequence showing one missing process stage"
+                width="1254"
+                height="1254"
+                loading="lazy"
+              />
+            </figure>
+            <ol className="architecture-list">
+              {architecture.map(([title, body], index) => (
+                <li key={title} data-enter>
+                  <span>{String(index + 1).padStart(2, '0')}</span>
+                  <div>
+                    <h3>{title}</h3>
+                    <p>{body}</p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        <section className="closing section-shell" data-enter>
           <div>
-            <p>Portfolio case study</p>
-            <h2>Built from event contract to incident response.</h2>
+            <h2>Built for the gap between execution and impact.</h2>
+            <p>
+              Explore the event contract, worker, API, and incident workspace in the repository.
+            </p>
           </div>
           <a
-            className="button button--primary"
+            className="button button--light"
             href="https://github.com/ostenmatrixx/outtrace"
             target="_blank"
             rel="noreferrer"
