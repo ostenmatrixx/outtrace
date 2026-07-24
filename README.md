@@ -1,19 +1,21 @@
 # Outtrace
 
 Outtrace is an open-source, cross-platform business-process observability product for automation
-agencies. Phase 1 implements the first complete telemetry path:
+agencies. Phase 2 turns the telemetry foundation into an operational incident workflow:
 
 ```text
 n8n / Make / custom service
   → authenticated POST /v1/events
   → validation and metadata minimization
-  → idempotent PostgreSQL persistence
-  → process-instance correlation
-  → inspectable response
+  → transactional PostgreSQL event + evaluation outbox
+  → retryable BullMQ incident evaluation
+  → failure / missing-stage / SLA / sequence detection
+  → authenticated incident inbox + optional Slack alert
 ```
 
-Incident detection and operational incident workflows begin in Phase 2; they are intentionally not
-part of this milestone.
+Incidents are correlated to the affected client, process, instance, stage, source execution, and
+cross-platform event timeline. Operators can filter, assign, acknowledge, annotate, and resolve
+them from the dashboard.
 
 ## Requirements
 
@@ -59,6 +61,9 @@ part of this milestone.
    - API: `http://localhost:3000`
    - API health: `http://localhost:3000/health`
    - Dashboard: the Vite URL printed in the terminal, normally `http://localhost:5173`
+
+   Open the incident inbox with `DEV_OPERATOR_KEY_ID` and `DEV_OPERATOR_KEY`. The dashboard keeps
+   these credentials in the current browser tab only; they are never compiled into its bundle.
 
 ## Send a test event
 
@@ -129,7 +134,7 @@ returns the same process-instance ID.
 | `npm test`                 | Run unit tests                                             |
 | `npm run test:integration` | Run PostgreSQL integration tests                           |
 | `npm run build`            | Build contracts and all applications                       |
-| `npm run verify`           | Run the complete Phase 1 quality suite                     |
+| `npm run verify`           | Run the complete Phase 2 quality suite                     |
 
 The integration command loads `TEST_DATABASE_URL` from the root `.env` and fails if it is missing
 or unreachable. It creates a random PostgreSQL schema, migrates and tests inside it, then removes
@@ -159,12 +164,18 @@ compiled into browser code and must never contain credentials.
 | `LOG_LEVEL`                                         | API               | `info`                           | Fastify log level                               |
 | `OUTTRACE_SEED_DEVELOPMENT`                         | Migrations        | `false` in code                  | Enables the local-only seed                     |
 | `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`         | Seed              | Required when seed enabled       | Public example values are local-only            |
+| `DEV_OPERATOR_KEY_ID`, `DEV_OPERATOR_KEY`           | Seed/dashboard    | Required when seed enabled       | Hashed operator credential for incident APIs    |
 | `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                 | Seed              | Required when seed enabled       | Stable local identifiers                        |
 | `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                 | Seed              | Required when seed enabled       | Stable local process                            |
 | `WORKER_CONCURRENCY`                                | Worker            | `5`, range 1–100                 | Parallel BullMQ jobs                            |
 | `WORKER_LOCK_DURATION_MS`                           | Worker            | `30000`, range 5000–600000       | BullMQ lock duration                            |
 | `WORKER_SHUTDOWN_TIMEOUT_MS`                        | Worker            | `30000`, range 100–120000        | Total shutdown deadline                         |
 | `REDIS_CONNECT_TIMEOUT_MS`                          | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                |
+| `PHASE_2_POLL_INTERVAL_MS`                          | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval    |
+| `PHASE_2_SWEEP_INTERVAL_MS`                         | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval            |
+| `SLACK_WEBHOOK_URL`                                 | Worker            | Optional HTTPS URL               | Secret incoming webhook; configure outside Git  |
+| `SLACK_MINIMUM_SEVERITY`                            | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`          |
+| `DASHBOARD_BASE_URL`                                | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links       |
 | `VITE_API_BASE_URL`                                 | Dashboard         | `http://localhost:3000`          | Public browser-visible API origin               |
 
 ## Repository layout
@@ -172,8 +183,8 @@ compiled into browser code and must never contain credentials.
 ```text
 apps/
   api/        Fastify ingestion API, migration runner, and persistence service
-  worker/     BullMQ/Redis worker foundation for later incident evaluation
-  dashboard/  React/Vite operational shell and dependency-health view
+  worker/     BullMQ evaluation worker, deadline sweeper, and Slack delivery
+  dashboard/  React/Vite health view and authenticated incident operations
 packages/
   contracts/  Shared Zod request, response, health, error, and queue contracts
 database/
@@ -259,25 +270,56 @@ Errors use one envelope:
 }
 ```
 
-## Health and worker foundation
+## Incident detection and delivery
 
 `GET /health` reports API status and separate PostgreSQL/Redis reachability. Dependency failures
 produce a degraded result, which the dashboard exposes with text and icons rather than color alone.
 
-The BullMQ worker consumes the shared incident-evaluation queue contract, validates job data, and
-returns an explicit Phase 2 no-op result. Phase 1 does not enqueue or evaluate incidents. This is
-deliberate: durable queue delivery and incident rules will be designed together in Phase 2.
+Every newly persisted event writes an evaluation-outbox row in the same PostgreSQL transaction.
+The worker publishes pending rows to BullMQ with stable job IDs and retry policy, then marks them
+published. A crash between Redis publication and the database update is safe because BullMQ
+deduplicates the stable job ID and incident evaluation is idempotent.
 
-## Phase 1 boundaries
+The incident engine detects:
 
-- The dashboard is a health-only operational shell; it has no process-management or timeline UI.
-- `stage` is validated as an identifier but is not yet checked against `process_stages`.
-- There is no client/process provisioning UI, credential rotation workflow, or event read API.
-- The API does not enqueue events yet; outbox delivery, incident persistence/rules, retention,
-  roles, audit logs, and notifications begin in later phases.
+- `reported_failure` when the latest event for a stage is failed;
+- `unexpected_sequence` when a stage arrives while a required predecessor is absent;
+- `missing_stage` after a required stage exceeds its timeout from process start or predecessor
+  completion; and
+- `sla_violation` when an incomplete process exceeds its configured duration.
+
+The deadline sweep detects time-based incidents even when no new event arrives. When completion
+events clear a failure, missing stage, sequence gap, or SLA breach, the related incident resolves
+automatically. Operator-resolved incidents stay resolved until a distinct condition is detected.
+New/reopened incidents write a separate notification outbox. Slack delivery is retried with bounded
+backoff and retains attempt/error state for inspection.
+
+## Incident API
+
+Operational endpoints require `x-outtrace-operator-key-id` and `x-outtrace-operator-key`; queries
+are always scoped to the authenticated workspace.
+
+| Method  | Endpoint                          | Purpose                                          |
+| ------- | --------------------------------- | ------------------------------------------------ |
+| `GET`   | `/v1/incidents`                   | List/filter incidents                            |
+| `GET`   | `/v1/incidents/:incidentId`       | Read business context, notes, and event timeline |
+| `PATCH` | `/v1/incidents/:incidentId`       | Assign, acknowledge, or resolve                  |
+| `POST`  | `/v1/incidents/:incidentId/notes` | Add an internal note                             |
+
+List filters include `status`, `severity`, `type`, `clientId`, `processId`, and `source`. Assignment,
+status changes, automatic lifecycle changes, and notes produce tenant-scoped audit records.
+
+## Phase 2 boundaries
+
+- The development seed creates one process and stage definition; a process-definition management
+  UI is still pending.
+- Operator keys provide a secure tenant boundary, but user accounts, invitations, and roles begin
+  in Phase 3.
+- Slack is configured per deployment through environment variables. Per-workspace notification
+  settings and client/channel routing remain Phase 3 work.
+- Event retention controls and client reliability reports remain Phase 3 work.
 - Compose runs PostgreSQL and Redis only, not application containers.
-- Production deployment, CI, backups/recovery, and full browser end-to-end coverage remain Phase 6
-  work.
+- Production deployment, CI, backups/recovery, and hosted secret management are not included.
 
 ## Troubleshooting
 
@@ -285,6 +327,10 @@ deliberate: durable queue delivery and incident rules will be designed together 
 
 Confirm that `OUTTRACE_SEED_DEVELOPMENT=true` was set when `npm run db:migrate` ran and that both
 headers match `DEV_INGESTION_KEY_ID` and `DEV_INGESTION_KEY`. Rerunning migrations is safe.
+
+For the incident inbox, use `DEV_OPERATOR_KEY_ID` and `DEV_OPERATOR_KEY`. If an older local database
+was seeded before Phase 2, rerun `npm run db:migrate` to populate the hashed operator credential and
+default stage rules.
 
 ### The process is unknown
 
@@ -328,4 +374,5 @@ public local-development value.
 
 - [Phase 0 engineering brief](docs/phase-0.md)
 - [ADR 0001: Phase 1 foundation and ingestion boundaries](docs/architecture/0001-phase-1-foundation.md)
+- [ADR 0002: Durable Phase 2 incident evaluation](docs/architecture/0002-phase-2-incidents.md)
 - [Product requirements](OUTTRACE_PRD.md)

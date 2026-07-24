@@ -18,10 +18,11 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   mockFetch.mockReset();
+  window.sessionStorage.clear();
 });
 
 describe('dashboard shell', () => {
-  it('has an accessible application shell with future areas unavailable', async () => {
+  it('has an accessible Phase 2 application shell with an incident inbox', async () => {
     mockFetch.mockResolvedValueOnce(
       jsonResponse({
         status: 'ok',
@@ -37,12 +38,8 @@ describe('dashboard shell', () => {
     render(<App />);
 
     expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByText('Processes').closest('[aria-disabled]')).toHaveAttribute(
-      'aria-disabled',
-      'true',
-    );
-    expect(screen.getByText('Incidents').closest('[aria-disabled]')).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Incidents' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('Reports').closest('[aria-disabled]')).toHaveAttribute(
       'aria-disabled',
       'true',
     );
@@ -51,8 +48,70 @@ describe('dashboard shell', () => {
       '#main-content',
     );
     expect(
-      screen.getByRole('heading', { name: 'Operational readiness', level: 1 }),
+      screen.getByRole('heading', { name: 'See the broken handoff.', level: 1 }),
     ).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Open the incident inbox' })).toBeInTheDocument();
+  });
+});
+
+describe('incident operations', () => {
+  it('authenticates an operator and renders a filterable incident', async () => {
+    const user = userEvent.setup();
+    mockFetch
+      .mockResolvedValueOnce(
+        jsonResponse({
+          status: 'ok',
+          service: 'outtrace-api',
+          dependencies: {
+            postgres: { status: 'up' },
+            redis: { status: 'up' },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          total: 1,
+          incidents: [
+            {
+              id: 'incident_1',
+              incidentType: 'reported_failure',
+              severity: 'high',
+              status: 'open',
+              affectedStage: 'account_created',
+              technicalMessage: 'n8n reported a failed event.',
+              businessMessage: 'Account creation failed for customer 4821.',
+              assignedTo: null,
+              source: 'n8n',
+              executionUrl: 'https://n8n.example.com/execution/1',
+              createdAt: '2026-07-24T01:00:00.000Z',
+              updatedAt: '2026-07-24T01:00:00.000Z',
+              acknowledgedAt: null,
+              resolvedAt: null,
+              client: { id: 'client_1', name: 'Acme' },
+              process: { id: 'process_1', key: 'onboarding', name: 'Client onboarding' },
+              instance: { id: 'instance_1', key: 'customer_4821', status: 'failed' },
+            },
+          ],
+        }),
+      );
+    vi.stubGlobal('fetch', mockFetch);
+
+    render(<App />);
+    await user.type(screen.getByLabelText('Operator name'), 'Mina');
+    await user.type(screen.getByLabelText('Operator key ID'), 'operator_1');
+    await user.type(screen.getByLabelText('Operator key'), 'secret');
+    await user.click(screen.getByRole('button', { name: 'Open inbox' }));
+
+    expect(
+      await screen.findByText('Account creation failed for customer 4821.'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('1 incident shown')).toBeInTheDocument();
+    expect(mockFetch.mock.calls[1]?.[1]).toMatchObject({
+      headers: expect.objectContaining({
+        'x-outtrace-operator-key-id': 'operator_1',
+        'x-outtrace-operator-name': 'Mina',
+      }),
+    });
   });
 });
 
@@ -66,7 +125,7 @@ describe('dependency health', () => {
     const list = screen.getByRole('list', { name: 'Service health' });
     expect(within(list).getAllByText('Checking')).toHaveLength(3);
     expect(screen.getByRole('button', { name: 'Checking…' })).toBeDisabled();
-    expect(screen.getByText('No completed check')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('Checking API, PostgreSQL, and Redis.');
   });
 
   it('times out a stalled check and allows an operator to retry', async () => {

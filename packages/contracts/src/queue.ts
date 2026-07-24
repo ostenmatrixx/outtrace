@@ -6,6 +6,7 @@ export const incidentEvaluationJobSchema = z.object({
   workspaceId: z.string().min(1),
   processInstanceId: z.string().min(1),
   eventId: z.string().min(1),
+  reason: z.enum(['event', 'deadline']).default('event'),
 });
 
 export type IncidentEvaluationJob = z.infer<typeof incidentEvaluationJobSchema>;

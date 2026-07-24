@@ -1,21 +1,19 @@
 import { incidentEvaluationJobSchema, type IncidentEvaluationJob } from '@outtrace/contracts';
+import type pg from 'pg';
 
-export interface IncidentEvaluationResult {
-  evaluated: false;
-  reason: 'phase_2_not_implemented';
-}
+import { evaluateProcessInstance, type IncidentEvaluationResult } from './incident-engine.js';
+
+export type { IncidentEvaluationResult } from './incident-engine.js';
 
 export function validateIncidentEvaluationJob(data: unknown): IncidentEvaluationJob {
   return incidentEvaluationJobSchema.parse(data);
 }
 
 export async function processIncidentEvaluationJob(
+  pool: pg.Pool,
   data: unknown,
+  evaluate: typeof evaluateProcessInstance = evaluateProcessInstance,
 ): Promise<IncidentEvaluationResult> {
-  validateIncidentEvaluationJob(data);
-
-  return {
-    evaluated: false,
-    reason: 'phase_2_not_implemented',
-  };
+  const job = validateIncidentEvaluationJob(data);
+  return evaluate(pool, job.workspaceId, job.processInstanceId);
 }

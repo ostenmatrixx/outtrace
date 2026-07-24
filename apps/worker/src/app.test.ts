@@ -9,11 +9,16 @@ import type { IncidentWorker } from './queue.js';
 import type { RedisConnection } from './redis.js';
 
 const config: WorkerConfig = {
+  databaseUrl: 'postgres://localhost/outtrace',
   redisUrl: 'redis://localhost:6379',
   concurrency: 5,
   lockDurationMs: 30_000,
   shutdownTimeoutMs: 1_000,
   redisConnectTimeoutMs: 10_000,
+  phase2PollIntervalMs: 1_000,
+  phase2SweepIntervalMs: 30_000,
+  slackMinimumSeverity: 'high',
+  dashboardBaseUrl: 'http://localhost:5173',
 };
 
 function loggerSpies(): Logger {

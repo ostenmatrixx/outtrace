@@ -19,11 +19,15 @@ const workspaceOne = {
   id: 'ws_integration_one',
   key: 'integration-secret-one',
   keyId: 'integration-key-one',
+  operatorKey: 'operator-secret-one',
+  operatorKeyId: 'operator-key-one',
 };
 const workspaceTwo = {
   id: 'ws_integration_two',
   key: 'integration-secret-two',
   keyId: 'integration-key-two',
+  operatorKey: 'operator-secret-two',
+  operatorKeyId: 'operator-key-two',
 };
 
 let adminPool: pg.Pool;
@@ -76,10 +80,24 @@ async function seedWorkspace(
 ): Promise<void> {
   await pool.query(
     `
-      INSERT INTO workspaces (id, name, ingestion_key_id, ingestion_key_hash)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO workspaces (
+        id,
+        name,
+        ingestion_key_id,
+        ingestion_key_hash,
+        operator_key_id,
+        operator_key_hash
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
     `,
-    [workspace.id, `Workspace ${suffix}`, workspace.keyId, sha256Hex(workspace.key)],
+    [
+      workspace.id,
+      `Workspace ${suffix}`,
+      workspace.keyId,
+      sha256Hex(workspace.key),
+      workspace.operatorKeyId,
+      sha256Hex(workspace.operatorKey),
+    ],
   );
   await pool.query('INSERT INTO clients (id, workspace_id, name) VALUES ($1, $2, $3)', [
     `client_${suffix}`,
@@ -93,6 +111,14 @@ async function seedWorkspace(
     `,
     [`process_${suffix}`, workspace.id, `client_${suffix}`, processKey, `Process ${suffix}`],
   );
+}
+
+function operatorHeaders(workspace = workspaceOne): Record<string, string> {
+  return {
+    'x-outtrace-operator-key': workspace.operatorKey,
+    'x-outtrace-operator-key-id': workspace.operatorKeyId,
+    'x-outtrace-operator-name': 'Integration Operator',
+  };
 }
 
 describe('Outtrace API PostgreSQL integration', () => {
@@ -159,6 +185,8 @@ describe('Outtrace API PostgreSQL integration', () => {
       clientId: 'client_seeded',
       ingestionKey: 'plaintext-seed-secret',
       ingestionKeyId: 'seed-key-id',
+      operatorKey: 'plaintext-operator-secret',
+      operatorKeyId: 'seed-operator-key-id',
       processId: 'process_seeded',
       processKey: 'seed-process',
       workspaceId: 'workspace_seeded',
@@ -275,6 +303,129 @@ describe('Outtrace API PostgreSQL integration', () => {
     expect(
       (await pool.query('SELECT count(*)::int AS count FROM process_instances')).rows[0],
     ).toEqual({ count: 1 });
+  });
+
+  it('writes one durable evaluation outbox job for each new event only', async () => {
+    await postEvent(eventPayload({ eventId: 'outbox-event' }));
+    await postEvent(eventPayload({ eventId: 'outbox-event' }));
+
+    expect(
+      (
+        await pool.query(
+          `
+            SELECT external_event_id, published_at
+            FROM event_evaluation_outbox
+            WHERE workspace_id = $1
+          `,
+          [workspaceOne.id],
+        )
+      ).rows,
+    ).toEqual([{ external_event_id: 'outbox-event', published_at: null }]);
+  });
+
+  it('serves a tenant-scoped incident workflow with timeline, assignment, notes, and audit', async () => {
+    const event = await postEvent(
+      eventPayload({
+        eventId: 'incident-source-event',
+        metadata: { executionUrl: 'https://n8n.example.com/execution/42' },
+        status: 'failed',
+      }),
+    );
+    const instanceId = event.json().processInstanceId as string;
+    await pool.query(
+      `
+        INSERT INTO incidents (
+          id,
+          workspace_id,
+          process_instance_id,
+          incident_type,
+          severity,
+          affected_stage,
+          technical_message,
+          business_message,
+          source,
+          execution_url
+        )
+        VALUES (
+          'incident_integration',
+          $1,
+          $2,
+          'reported_failure',
+          'high',
+          'workspace_created',
+          'n8n reported a failed event.',
+          'Workspace creation failed.',
+          'n8n',
+          'https://n8n.example.com/execution/42'
+        )
+      `,
+      [workspaceOne.id, instanceId],
+    );
+
+    const unauthorized = await app.inject({ method: 'GET', url: '/v1/incidents' });
+    expect(unauthorized.statusCode).toBe(401);
+
+    const otherTenant = await app.inject({
+      headers: operatorHeaders(workspaceTwo),
+      method: 'GET',
+      url: '/v1/incidents',
+    });
+    expect(otherTenant.json()).toEqual({ incidents: [], total: 0 });
+
+    const inbox = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: '/v1/incidents?status=open&severity=high',
+    });
+    expect(inbox.statusCode).toBe(200);
+    expect(inbox.json()).toMatchObject({
+      total: 1,
+      incidents: [
+        {
+          id: 'incident_integration',
+          client: { name: 'Client one' },
+          process: { name: 'Process one' },
+          instance: { id: instanceId },
+        },
+      ],
+    });
+
+    const updated = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { assignedTo: 'Mina', status: 'acknowledged' },
+      url: '/v1/incidents/incident_integration',
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json()).toMatchObject({
+      assignedTo: 'Mina',
+      status: 'acknowledged',
+      timeline: [
+        {
+          eventId: 'incident-source-event',
+          executionUrl: 'https://n8n.example.com/execution/42',
+        },
+      ],
+    });
+
+    const noted = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { author: 'Mina', body: 'Retrying the source workflow.' },
+      url: '/v1/incidents/incident_integration/notes',
+    });
+    expect(noted.statusCode).toBe(201);
+    expect(noted.json()).toMatchObject({
+      notes: [{ author: 'Mina', body: 'Retrying the source workflow.' }],
+    });
+    expect(
+      (
+        await pool.query(
+          'SELECT action FROM incident_audit_log WHERE incident_id = $1 ORDER BY created_at, id',
+          ['incident_integration'],
+        )
+      ).rows.map((row) => row.action),
+    ).toEqual(expect.arrayContaining(['acknowledged', 'assigned', 'note_added']));
   });
 
   it('rolls back a newly correlated instance when event insertion fails', async () => {

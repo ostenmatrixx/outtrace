@@ -1,7 +1,7 @@
 import type pg from 'pg';
 import { describe, expect, it } from 'vitest';
 
-import { authenticateIngestion } from './authentication.js';
+import { authenticateIngestion, authenticateOperator } from './authentication.js';
 import { sha256Hex } from './crypto.js';
 
 function fakePool(
@@ -48,5 +48,25 @@ describe('authenticateIngestion', () => {
 
     expect(error).toMatchObject({ code: 'DATABASE_FAILURE', statusCode: 503 });
     expect((error as Error).message).not.toContain('sensitive-host');
+  });
+});
+
+describe('authenticateOperator', () => {
+  it('uses the separate hashed operator credential', async () => {
+    const pool = {
+      async query() {
+        return {
+          rowCount: 1,
+          rows: [{ id: 'ws_1', operator_key_hash: sha256Hex('operator-secret') }],
+        };
+      },
+    } as unknown as pg.Pool;
+
+    await expect(
+      authenticateOperator(pool, { key: 'operator-secret', keyId: 'operator_1' }),
+    ).resolves.toBe('ws_1');
+    await expect(
+      authenticateOperator(pool, { key: 'ingestion-secret', keyId: 'operator_1' }),
+    ).rejects.toMatchObject({ code: 'AUTHENTICATION_INVALID' });
   });
 });

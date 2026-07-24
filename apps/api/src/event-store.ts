@@ -170,6 +170,19 @@ export async function persistEvent(
 
     await client.query(
       `
+        INSERT INTO event_evaluation_outbox (
+          id,
+          workspace_id,
+          process_instance_id,
+          external_event_id
+        )
+        VALUES ($1, $2, $3, $4)
+      `,
+      [`evaluation_${randomUUID()}`, workspaceId, instance.id, event.eventId],
+    );
+
+    await client.query(
+      `
         UPDATE process_instances
         SET
           started_at = LEAST(started_at, $3),

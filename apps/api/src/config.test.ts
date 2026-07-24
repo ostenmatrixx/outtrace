@@ -39,6 +39,8 @@ describe('loadConfig', () => {
         DEV_CLIENT_ID: 'client_1',
         DEV_INGESTION_KEY: 'secret',
         DEV_INGESTION_KEY_ID: 'key_1',
+        DEV_OPERATOR_KEY: 'operator-secret',
+        DEV_OPERATOR_KEY_ID: 'operator-key-1',
         DEV_PROCESS_ID: 'process_1',
         DEV_PROCESS_KEY: 'onboarding',
         DEV_WORKSPACE_ID: 'workspace_1',
