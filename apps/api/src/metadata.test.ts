@@ -69,4 +69,20 @@ describe('sanitizeMetadata', () => {
       executionUrl: 'https://n8n.example.com/execution/9281',
     });
   });
+
+  it('applies a per-process allowlist while retaining global bounds and redaction', () => {
+    expect(
+      sanitizeMetadata(
+        {
+          orderId: 'order_42',
+          customerEmail: 'not-allowed@example.com',
+          accessToken: 'must-not-survive',
+        },
+        ['orderId', 'accessToken'],
+      ),
+    ).toEqual({
+      orderId: 'order_42',
+      accessToken: '[REDACTED]',
+    });
+  });
 });

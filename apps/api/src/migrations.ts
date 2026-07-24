@@ -57,6 +57,36 @@ async function seedDevelopmentData(
 
   await client.query(
     `
+      INSERT INTO workspace_members (
+        id,
+        workspace_id,
+        name,
+        email,
+        role,
+        status,
+        access_key_id,
+        access_key_hash
+      )
+      VALUES ($1, $2, 'Development owner', 'owner@local.outtrace.invalid', 'owner', 'active', $3, $4)
+      ON CONFLICT (access_key_id) DO UPDATE
+      SET
+        name = EXCLUDED.name,
+        role = 'owner',
+        status = 'active',
+        access_key_hash = EXCLUDED.access_key_hash,
+        updated_at = now()
+      WHERE workspace_members.workspace_id = EXCLUDED.workspace_id
+    `,
+    [
+      `member_${seed.workspaceId}_owner`,
+      seed.workspaceId,
+      seed.operatorKeyId,
+      sha256Hex(seed.operatorKey),
+    ],
+  );
+
+  await client.query(
+    `
       INSERT INTO clients (id, workspace_id, name)
       VALUES ($1, $2, $3)
       ON CONFLICT (id) DO UPDATE

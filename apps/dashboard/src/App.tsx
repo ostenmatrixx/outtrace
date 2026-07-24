@@ -7,6 +7,7 @@ import type {
 } from '@outtrace/contracts';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
+import { AgencyPanel } from './AgencyPanel';
 import {
   type HealthSnapshot,
   type ServiceHealth,
@@ -133,23 +134,22 @@ function ShellNavigation() {
             </a>
           </li>
           <li>
-            <a className="nav-item nav-item--active" href="#incidents" aria-current="page">
+            <a className="nav-item" href="#incidents">
               <span aria-hidden="true">02</span>
               Incidents
             </a>
           </li>
           <li>
-            <span className="nav-item nav-item--unavailable" aria-disabled="true">
+            <a className="nav-item nav-item--active" href="#agency" aria-current="page">
               <span aria-hidden="true">03</span>
-              Reports
-              <small>Phase 3</small>
-            </span>
+              Agency
+            </a>
           </li>
         </ul>
       </nav>
       <div className="sidebar__footer">
-        <span>Incident operations</span>
-        <strong>Phase 2</strong>
+        <span>Agency operations</span>
+        <strong>Phase 3</strong>
       </div>
     </aside>
   );
@@ -529,16 +529,16 @@ export function App() {
       <main id="main-content" className="main-content">
         <header className="page-header" id="overview">
           <div>
-            <p className="eyebrow">Operations workspace / Incident command</p>
-            <h1>See the broken handoff.</h1>
+            <p className="eyebrow">Operations workspace / Agency command</p>
+            <h1>One view. Every client.</h1>
             <p className="page-header__intro">
-              Failure, sequence, missing-stage, and SLA signals correlated into one business-process
-              inbox.
+              Separate every client, control who can see them, and turn process reliability into a
+              report the whole team can act on.
             </p>
           </div>
-          <div className="phase-stamp" aria-label="Current release phase: Phase 2">
+          <div className="phase-stamp" aria-label="Current release phase: Phase 3">
             <span>Release state</span>
-            <strong>PHASE / 02</strong>
+            <strong>PHASE / 03</strong>
           </div>
         </header>
 
@@ -722,6 +722,7 @@ export function App() {
             </>
           )}
         </section>
+        {session ? <AgencyPanel apiBaseUrl={apiBaseUrl} credentials={session} /> : null}
       </main>
     </div>
   );

@@ -7,7 +7,7 @@ import { eventStatuses, ingestEventSchema } from '@outtrace/contracts';
 import { authenticateIngestion, readIngestionCredentials } from '../authentication.js';
 import { HttpError } from '../errors.js';
 import { persistEvent } from '../event-store.js';
-import { isSensitiveMetadataKey, sanitizeMetadata } from '../metadata.js';
+import { isSensitiveMetadataKey } from '../metadata.js';
 
 const supportedStatuses = new Set<string>(eventStatuses);
 
@@ -71,11 +71,11 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
         );
       }
 
-      const event = {
-        ...parsed.data,
-        metadata: sanitizeMetadata(parsed.data.metadata),
-      };
-      const response = await persistEvent(app.outtrace.pool, request.outtraceWorkspaceId!, event);
+      const response = await persistEvent(
+        app.outtrace.pool,
+        request.outtraceWorkspaceId!,
+        parsed.data,
+      );
 
       return reply.code(response.duplicate ? 200 : 202).send(response);
     },

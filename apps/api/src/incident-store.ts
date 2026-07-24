@@ -57,6 +57,7 @@ interface NoteRow extends pg.QueryResultRow {
 
 export interface IncidentFilters {
   clientId?: string | undefined;
+  clientIds?: string[] | null | undefined;
   limit: number;
   processId?: string | undefined;
   severity?: IncidentSummary['severity'] | undefined;
@@ -154,6 +155,10 @@ export async function listIncidents(
   if (filters.severity) addFilter('incidents.severity', filters.severity);
   if (filters.type) addFilter('incidents.incident_type', filters.type);
   if (filters.clientId) addFilter('clients.id', filters.clientId);
+  if (filters.clientIds !== undefined && filters.clientIds !== null) {
+    values.push(filters.clientIds);
+    clauses.push(`clients.id = ANY($${values.length}::text[])`);
+  }
   if (filters.processId) addFilter('processes.id', filters.processId);
   if (filters.source) addFilter('incidents.source', filters.source);
   values.push(filters.limit);

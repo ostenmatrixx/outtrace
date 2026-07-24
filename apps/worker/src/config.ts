@@ -7,6 +7,7 @@ export interface WorkerConfig {
   redisConnectTimeoutMs: number;
   phase2PollIntervalMs: number;
   phase2SweepIntervalMs: number;
+  retentionSweepIntervalMs: number;
   slackWebhookUrl?: string;
   slackMinimumSeverity: 'critical' | 'high' | 'medium' | 'low';
   dashboardBaseUrl: string;
@@ -18,6 +19,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
 const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_PHASE_2_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_PHASE_2_SWEEP_INTERVAL_MS = 30_000;
+const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 3_600_000;
 
 export class WorkerConfigError extends Error {
   override readonly name = 'WorkerConfigError';
@@ -147,6 +149,13 @@ export function loadWorkerConfig(environment: NodeJS.ProcessEnv = process.env): 
       DEFAULT_PHASE_2_SWEEP_INTERVAL_MS,
       1_000,
       300_000,
+    ),
+    retentionSweepIntervalMs: integerInRange(
+      'RETENTION_SWEEP_INTERVAL_MS',
+      environment.RETENTION_SWEEP_INTERVAL_MS,
+      DEFAULT_RETENTION_SWEEP_INTERVAL_MS,
+      60_000,
+      86_400_000,
     ),
     ...(slackWebhookUrl ? { slackWebhookUrl } : {}),
     slackMinimumSeverity: slackMinimumSeverity as WorkerConfig['slackMinimumSeverity'],

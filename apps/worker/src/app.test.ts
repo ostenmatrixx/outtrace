@@ -17,6 +17,7 @@ const config: WorkerConfig = {
   redisConnectTimeoutMs: 10_000,
   phase2PollIntervalMs: 1_000,
   phase2SweepIntervalMs: 30_000,
+  retentionSweepIntervalMs: 3_600_000,
   slackMinimumSeverity: 'high',
   dashboardBaseUrl: 'http://localhost:5173',
 };

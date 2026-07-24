@@ -4,9 +4,14 @@ import type { IngestEvent, IngestEventResponse } from '@outtrace/contracts';
 import type pg from 'pg';
 
 import { databaseFailure, HttpError } from './errors.js';
+import { sanitizeMetadata } from './metadata.js';
 
 interface IdRow extends pg.QueryResultRow {
   id: string;
+}
+
+interface ProcessRow extends IdRow {
+  metadata_allowlist: string[];
 }
 
 interface InstanceRow extends IdRow {
@@ -35,9 +40,9 @@ export async function persistEvent(
       `${workspaceId}:${event.eventId}`,
     ]);
 
-    const processResult = await client.query<IdRow>(
+    const processResult = await client.query<ProcessRow>(
       `
-        SELECT id
+        SELECT id, metadata_allowlist
         FROM processes
         WHERE workspace_id = $1 AND key = $2
       `,
@@ -123,7 +128,7 @@ export async function persistEvent(
         event.stage,
         event.status,
         event.source,
-        JSON.stringify(event.metadata),
+        JSON.stringify(sanitizeMetadata(event.metadata, processRecord.metadata_allowlist)),
         event.occurredAt,
       ],
     );

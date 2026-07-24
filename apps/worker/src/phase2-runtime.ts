@@ -38,6 +38,11 @@ interface NotificationRow extends pg.QueryResultRow {
   instance_key: string;
 }
 
+interface WorkspaceRetentionRow extends pg.QueryResultRow {
+  id: string;
+  event_retention_days: number;
+}
+
 export interface Phase2Runtime {
   readonly pool: pg.Pool;
   close(): Promise<void>;
@@ -248,6 +253,89 @@ export async function deliverSlackNotifications(
   return sent;
 }
 
+export async function enforceEventRetention(pool: pg.Pool, now = new Date()): Promise<number> {
+  const workspaces = await pool.query<WorkspaceRetentionRow>(
+    `SELECT id, event_retention_days FROM workspaces ORDER BY id`,
+  );
+  let totalDeleted = 0;
+  for (const workspace of workspaces.rows) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const deleted = await client.query<{ count: number }>(
+        `
+          WITH removed AS (
+            DELETE FROM events
+            WHERE
+              workspace_id = $1
+              AND received_at < $2::timestamptz - ($3::int * interval '1 day')
+            RETURNING 1
+          )
+          SELECT count(*)::int AS count FROM removed
+        `,
+        [workspace.id, now, workspace.event_retention_days],
+      );
+      const count = deleted.rows[0]?.count ?? 0;
+      if (count > 0) {
+        await client.query(
+          `
+            INSERT INTO retention_runs (
+              id,
+              workspace_id,
+              retention_days,
+              events_deleted,
+              completed_at
+            )
+            VALUES ($1, $2, $3, $4, $5)
+          `,
+          [`retention_${randomUUID()}`, workspace.id, workspace.event_retention_days, count, now],
+        );
+        await client.query(
+          `
+            INSERT INTO workspace_audit_log (
+              id,
+              workspace_id,
+              actor_name,
+              action,
+              entity_type,
+              entity_id,
+              details,
+              created_at
+            )
+            VALUES (
+              $1,
+              $2,
+              'retention-worker',
+              'events_retained',
+              'workspace',
+              $2,
+              $3::jsonb,
+              $4
+            )
+          `,
+          [
+            `audit_${randomUUID()}`,
+            workspace.id,
+            JSON.stringify({
+              retentionDays: workspace.event_retention_days,
+              eventsDeleted: count,
+            }),
+            now,
+          ],
+        );
+      }
+      await client.query('COMMIT');
+      totalDeleted += count;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+  return totalDeleted;
+}
+
 export function createPhase2Runtime(
   connection: RedisConnection,
   config: WorkerConfig,
@@ -265,6 +353,7 @@ export function createPhase2Runtime(
   let timer: NodeJS.Timeout | undefined;
   let running: Promise<void> | undefined;
   let lastSweepAt = 0;
+  let lastRetentionAt = 0;
 
   const tick = async (): Promise<void> => {
     if (running) return running;
@@ -272,12 +361,17 @@ export function createPhase2Runtime(
       const published = await dispatchEvaluationOutbox(pool, queue);
       const notified = await deliverSlackNotifications(pool, config);
       let swept = 0;
+      let retained = 0;
       if (Date.now() - lastSweepAt >= config.phase2SweepIntervalMs) {
         swept = await sweepIncidentDeadlines(pool);
         lastSweepAt = Date.now();
       }
-      if (published > 0 || notified > 0 || swept > 0) {
-        logger.info('phase_2_cycle_completed', { published, notified, swept });
+      if (Date.now() - lastRetentionAt >= config.retentionSweepIntervalMs) {
+        retained = await enforceEventRetention(pool);
+        lastRetentionAt = Date.now();
+      }
+      if (published > 0 || notified > 0 || swept > 0 || retained > 0) {
+        logger.info('worker_cycle_completed', { published, notified, swept, retained });
       }
     })()
       .catch((error) => {
@@ -306,3 +400,4 @@ export function createPhase2Runtime(
     },
   };
 }
+import { randomUUID } from 'node:crypto';

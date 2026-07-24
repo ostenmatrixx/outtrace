@@ -35,7 +35,7 @@ export function saveOperatorSession(session: OperatorSession | null): void {
   }
 }
 
-function headers(session: OperatorSession): HeadersInit {
+export function operatorHeaders(session: OperatorSession): HeadersInit {
   return {
     Accept: 'application/json',
     'Content-Type': 'application/json',
@@ -45,7 +45,7 @@ function headers(session: OperatorSession): HeadersInit {
   };
 }
 
-async function responseJson(response: Response): Promise<unknown> {
+export async function responseJson(response: Response): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const message =
@@ -77,7 +77,7 @@ export async function fetchIncidents(
     if (value) query.set(key, value);
   }
   const response = await fetch(`${apiBaseUrl}/v1/incidents?${query}`, {
-    headers: headers(session),
+    headers: operatorHeaders(session),
   });
   return incidentListResponseSchema.parse(await responseJson(response));
 }
@@ -88,7 +88,7 @@ export async function fetchIncident(
   incidentId: string,
 ): Promise<IncidentDetail> {
   const response = await fetch(`${apiBaseUrl}/v1/incidents/${encodeURIComponent(incidentId)}`, {
-    headers: headers(session),
+    headers: operatorHeaders(session),
   });
   return incidentDetailSchema.parse(await responseJson(response));
 }
@@ -101,7 +101,7 @@ export async function patchIncident(
 ): Promise<IncidentDetail> {
   const response = await fetch(`${apiBaseUrl}/v1/incidents/${encodeURIComponent(incidentId)}`, {
     method: 'PATCH',
-    headers: headers(session),
+    headers: operatorHeaders(session),
     body: JSON.stringify(update),
   });
   return incidentDetailSchema.parse(await responseJson(response));
@@ -117,7 +117,7 @@ export async function postIncidentNote(
     `${apiBaseUrl}/v1/incidents/${encodeURIComponent(incidentId)}/notes`,
     {
       method: 'POST',
-      headers: headers(session),
+      headers: operatorHeaders(session),
       body: JSON.stringify(note),
     },
   );

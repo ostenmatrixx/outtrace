@@ -37,7 +37,10 @@ function isAllowedExecutionUrl(value: string): boolean {
   }
 }
 
-export function sanitizeMetadata(metadata: Record<string, unknown>): Record<string, string> {
+export function sanitizeMetadata(
+  metadata: Record<string, unknown>,
+  allowedKeys: string[] = Object.keys(metadataValueLimits),
+): Record<string, string> {
   const redacted = redactSensitiveMetadata(metadata);
   if (redacted === null || typeof redacted !== 'object' || Array.isArray(redacted)) {
     return {};
@@ -46,7 +49,8 @@ export function sanitizeMetadata(metadata: Record<string, unknown>): Record<stri
   const sanitized: Record<string, string> = {};
   let totalBytes = 0;
 
-  for (const [key, maximumLength] of Object.entries(metadataValueLimits)) {
+  for (const key of new Set(allowedKeys)) {
+    const maximumLength = metadataValueLimits[key as keyof typeof metadataValueLimits] ?? 512;
     const value = (redacted as Record<string, unknown>)[key];
     if (typeof value !== 'string' || value.length === 0 || value.length > maximumLength) {
       continue;

@@ -5,6 +5,7 @@ import type pg from 'pg';
 
 import { HttpError } from './errors.js';
 import type { RedisConnection } from './redis.js';
+import { registerAgencyRoutes } from './routes/agency.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerIncidentRoutes } from './routes/incidents.js';
@@ -104,6 +105,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(registerHealthRoute);
   await app.register(registerEventRoutes);
   await app.register(registerIncidentRoutes);
+  await app.register(registerAgencyRoutes);
 
   app.addHook('onClose', async () => {
     await Promise.allSettled([options.dependencies.pool.end(), options.dependencies.redis.close()]);
