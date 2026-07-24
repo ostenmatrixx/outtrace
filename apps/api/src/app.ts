@@ -7,6 +7,7 @@ import { HttpError } from './errors.js';
 import type { RedisConnection } from './redis.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerIncidentRoutes } from './routes/incidents.js';
 
 export interface AppDependencies {
   pool: pg.Pool;
@@ -84,7 +85,16 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
 
   await app.register(cors, {
-    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: [
+      'accept',
+      'content-type',
+      'x-outtrace-key',
+      'x-outtrace-key-id',
+      'x-outtrace-operator-key',
+      'x-outtrace-operator-key-id',
+      'x-outtrace-operator-name',
+    ],
+    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
     origin: options.corsOrigin ?? 'http://localhost:5173',
   });
   await app.register(rateLimit, {
@@ -93,6 +103,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   });
   await app.register(registerHealthRoute);
   await app.register(registerEventRoutes);
+  await app.register(registerIncidentRoutes);
 
   app.addHook('onClose', async () => {
     await Promise.allSettled([options.dependencies.pool.end(), options.dependencies.redis.close()]);

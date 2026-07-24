@@ -28,6 +28,8 @@ const configSchema = z
     OUTTRACE_SEED_DEVELOPMENT: booleanFromEnvironment,
     DEV_INGESTION_KEY_ID: z.string().min(1).optional(),
     DEV_INGESTION_KEY: z.string().min(1).optional(),
+    DEV_OPERATOR_KEY_ID: z.string().min(1).optional(),
+    DEV_OPERATOR_KEY: z.string().min(1).optional(),
     DEV_WORKSPACE_ID: z.string().min(1).optional(),
     DEV_CLIENT_ID: z.string().min(1).optional(),
     DEV_PROCESS_ID: z.string().min(1).optional(),
@@ -49,6 +51,8 @@ const configSchema = z
     const requiredSeedValues = [
       'DEV_INGESTION_KEY_ID',
       'DEV_INGESTION_KEY',
+      'DEV_OPERATOR_KEY_ID',
+      'DEV_OPERATOR_KEY',
       'DEV_WORKSPACE_ID',
       'DEV_CLIENT_ID',
       'DEV_PROCESS_ID',
@@ -70,6 +74,8 @@ export interface DevelopmentSeedConfig {
   clientId: string;
   ingestionKey: string;
   ingestionKeyId: string;
+  operatorKey: string;
+  operatorKeyId: string;
   processId: string;
   processKey: string;
   workspaceId: string;
@@ -111,6 +117,8 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiCon
         clientId: value.DEV_CLIENT_ID!,
         ingestionKey: value.DEV_INGESTION_KEY!,
         ingestionKeyId: value.DEV_INGESTION_KEY_ID!,
+        operatorKey: value.DEV_OPERATOR_KEY!,
+        operatorKeyId: value.DEV_OPERATOR_KEY_ID!,
         processId: value.DEV_PROCESS_ID!,
         processKey: value.DEV_PROCESS_KEY!,
         workspaceId: value.DEV_WORKSPACE_ID!,

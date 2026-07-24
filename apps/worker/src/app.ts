@@ -3,6 +3,7 @@ import type { Job } from 'bullmq';
 import type { WorkerConfig } from './config.js';
 import { createShutdownController, installSignalHandlers, type SignalSource } from './lifecycle.js';
 import { createLogger, safeError, type Logger } from './logger.js';
+import { createPhase2Runtime, type Phase2Runtime } from './phase2-runtime.js';
 import { createIncidentEvaluationWorker, type IncidentWorker } from './queue.js';
 import { createRedisConnection, type RedisConnection } from './redis.js';
 
@@ -20,6 +21,7 @@ export interface WorkerApplicationOptions {
   signalSource?: SignalSource;
   createRedis?: typeof createRedisConnection;
   createWorker?: typeof createIncidentEvaluationWorker;
+  createRuntime?: (redis: RedisConnection, config: WorkerConfig, logger: Logger) => Phase2Runtime;
 }
 
 type ComponentStatus = 'starting' | 'ready' | 'degraded';
@@ -31,7 +33,22 @@ export function startWorkerApplication(
 ): WorkerApplication {
   const logger = options.logger ?? createLogger();
   const redis = (options.createRedis ?? createRedisConnection)(config);
-  const worker = (options.createWorker ?? createIncidentEvaluationWorker)(redis, config);
+  const runtime =
+    options.createRuntime?.(redis, config, logger) ??
+    (options.createWorker
+      ? {
+          pool: {} as Phase2Runtime['pool'],
+          async close() {},
+          start() {},
+          async tick() {},
+        }
+      : createPhase2Runtime(redis, config, logger));
+  const worker = (options.createWorker ?? createIncidentEvaluationWorker)(
+    redis,
+    config,
+    runtime.pool,
+  );
+  runtime.start();
   let redisStatus: ComponentStatus = 'starting';
   let workerStatus: ComponentStatus = 'starting';
   let lifecycleStatus: LifecycleStatus = 'running';
@@ -100,7 +117,15 @@ export function startWorkerApplication(
   });
 
   const performShutdown = createShutdownController(
-    { redis, worker },
+    {
+      redis,
+      worker: {
+        close: async (force) => {
+          await worker.close(force);
+          await runtime.close();
+        },
+      },
+    },
     { logger, timeoutMs: config.shutdownTimeoutMs },
   );
   const removeSignalHandlers = installSignalHandlers(async (reason) => {

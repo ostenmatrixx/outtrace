@@ -27,13 +27,22 @@ async function seedDevelopmentData(
 ): Promise<void> {
   await client.query(
     `
-      INSERT INTO workspaces (id, name, ingestion_key_id, ingestion_key_hash)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO workspaces (
+        id,
+        name,
+        ingestion_key_id,
+        ingestion_key_hash,
+        operator_key_id,
+        operator_key_hash
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
       ON CONFLICT (id) DO UPDATE
       SET
         name = EXCLUDED.name,
         ingestion_key_id = EXCLUDED.ingestion_key_id,
         ingestion_key_hash = EXCLUDED.ingestion_key_hash,
+        operator_key_id = EXCLUDED.operator_key_id,
+        operator_key_hash = EXCLUDED.operator_key_hash,
         updated_at = now()
     `,
     [
@@ -41,6 +50,8 @@ async function seedDevelopmentData(
       'Outtrace development workspace',
       seed.ingestionKeyId,
       sha256Hex(seed.ingestionKey),
+      seed.operatorKeyId,
+      sha256Hex(seed.operatorKey),
     ],
   );
 
@@ -57,12 +68,13 @@ async function seedDevelopmentData(
 
   await client.query(
     `
-      INSERT INTO processes (id, workspace_id, client_id, key, name)
-      VALUES ($1, $2, $3, $4, $5)
+      INSERT INTO processes (id, workspace_id, client_id, key, name, sla_seconds)
+      VALUES ($1, $2, $3, $4, $5, 1800)
       ON CONFLICT (id) DO UPDATE
       SET
         key = EXCLUDED.key,
         name = EXCLUDED.name,
+        sla_seconds = EXCLUDED.sla_seconds,
         updated_at = now()
       WHERE
         processes.workspace_id = EXCLUDED.workspace_id
@@ -76,6 +88,50 @@ async function seedDevelopmentData(
       'Development onboarding process',
     ],
   );
+
+  const stages = [
+    ['payment_received', 'Payment received', 0, 300, 'make'],
+    ['account_created', 'Account created', 1, 600, 'custom'],
+    ['workspace_created', 'Workspace created', 2, 600, 'n8n'],
+    ['welcome_email_sent', 'Welcome email sent', 3, 300, 'custom'],
+  ] as const;
+
+  for (const [key, name, position, timeoutSeconds, source] of stages) {
+    await client.query(
+      `
+        INSERT INTO process_stages (
+          id,
+          workspace_id,
+          process_id,
+          key,
+          name,
+          position,
+          required,
+          timeout_seconds,
+          source
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, true, $7, $8)
+        ON CONFLICT (process_id, key) DO UPDATE
+        SET
+          name = EXCLUDED.name,
+          position = EXCLUDED.position,
+          required = EXCLUDED.required,
+          timeout_seconds = EXCLUDED.timeout_seconds,
+          source = EXCLUDED.source,
+          updated_at = now()
+      `,
+      [
+        `${seed.processId}_${key}`,
+        seed.workspaceId,
+        seed.processId,
+        key,
+        name,
+        position,
+        timeoutSeconds,
+        source,
+      ],
+    );
+  }
 }
 
 export interface MigrationOptions {

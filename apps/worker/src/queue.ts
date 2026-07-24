@@ -1,5 +1,6 @@
 import { INCIDENT_EVALUATION_QUEUE, type IncidentEvaluationJob } from '@outtrace/contracts';
 import { Worker, type Job } from 'bullmq';
+import type pg from 'pg';
 
 import type { WorkerConfig } from './config.js';
 import { processIncidentEvaluationJob, type IncidentEvaluationResult } from './processor.js';
@@ -14,6 +15,7 @@ export type IncidentWorker = Worker<
 export function createIncidentEvaluationWorker(
   connection: RedisConnection,
   config: WorkerConfig,
+  pool: pg.Pool,
 ): IncidentWorker {
   return new Worker<
     IncidentEvaluationJob,
@@ -21,7 +23,7 @@ export function createIncidentEvaluationWorker(
     typeof INCIDENT_EVALUATION_QUEUE
   >(
     INCIDENT_EVALUATION_QUEUE,
-    async (job: Job<IncidentEvaluationJob>) => processIncidentEvaluationJob(job.data),
+    async (job: Job<IncidentEvaluationJob>) => processIncidentEvaluationJob(pool, job.data),
     {
       connection,
       concurrency: config.concurrency,
