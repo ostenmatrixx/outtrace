@@ -1,17 +1,23 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { App } from './App';
-import './styles.css';
-
 const root = document.getElementById('root');
 
 if (!root) {
   throw new Error('Dashboard root element is missing');
 }
 
-createRoot(root).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-);
+const dashboardRoute = window.location.pathname.startsWith('/app');
+const [{ App }, { LandingPage }] = await Promise.all([import('./App'), import('./LandingPage')]);
+
+if (dashboardRoute) {
+  document.title = 'Outtrace | Agency operations';
+  document
+    .querySelector('meta[name="description"]')
+    ?.setAttribute('content', 'Outtrace cross-platform incident and agency operations workspace.');
+  await import('./styles.css');
+} else {
+  await import('./landing.css');
+}
+
+createRoot(root).render(<StrictMode>{dashboardRoute ? <App /> : <LandingPage />}</StrictMode>);
