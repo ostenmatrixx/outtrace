@@ -34,6 +34,7 @@ function validationDetails(
 }
 
 export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
+  app.decorateRequest('outtraceIngestion');
   app.decorateRequest('outtraceWorkspaceId');
 
   app.post(
@@ -48,7 +49,9 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
       },
       preParsing: async (request, _reply, payload) => {
         const credentials = readIngestionCredentials(request);
-        request.outtraceWorkspaceId = await authenticateIngestion(app.outtrace.pool, credentials);
+        const principal = await authenticateIngestion(app.outtrace.pool, credentials);
+        request.outtraceIngestion = principal;
+        request.outtraceWorkspaceId = principal.workspaceId;
         return payload;
       },
     },
@@ -75,6 +78,7 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
         app.outtrace.pool,
         request.outtraceWorkspaceId!,
         parsed.data,
+        request.outtraceIngestion!.processId,
       );
 
       return reply.code(response.duplicate ? 200 : 202).send(response);

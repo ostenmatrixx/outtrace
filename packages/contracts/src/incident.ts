@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { incidentFeedbackSchema } from './pilot.js';
+
 export const incidentTypes = [
   'reported_failure',
   'missing_stage',
@@ -65,6 +67,7 @@ export const incidentNoteSchema = z.object({
 export const incidentDetailSchema = incidentSummarySchema.extend({
   timeline: z.array(incidentEventSchema),
   notes: z.array(incidentNoteSchema),
+  feedback: incidentFeedbackSchema.nullable(),
 });
 
 export const incidentListResponseSchema = z.object({

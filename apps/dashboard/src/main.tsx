@@ -11,10 +11,13 @@ const dashboardRoute = window.location.pathname.startsWith('/app');
 const [{ App }, { LandingPage }] = await Promise.all([import('./App'), import('./LandingPage')]);
 
 if (dashboardRoute) {
-  document.title = 'Outtrace | Agency operations';
+  document.title = 'Outtrace | Pilot operations';
   document
     .querySelector('meta[name="description"]')
-    ?.setAttribute('content', 'Outtrace cross-platform incident and agency operations workspace.');
+    ?.setAttribute(
+      'content',
+      'Outtrace production activation, incident quality, and agency operations workspace.',
+    );
   await import('./styles.css');
 } else {
   await import('./landing.css');

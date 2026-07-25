@@ -15,6 +15,9 @@ function fakePool(healthy: boolean, queries: string[] = []): pg.Pool {
       if (!healthy) {
         throw new Error('postgres unavailable at sensitive-host');
       }
+      if (sql.includes('FROM process_ingestion_credentials')) {
+        return { rowCount: 0, rows: [] };
+      }
       if (sql.includes('FROM workspaces')) {
         return {
           rowCount: 1,

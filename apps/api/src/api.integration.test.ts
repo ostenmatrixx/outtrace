@@ -121,6 +121,40 @@ function operatorHeaders(workspace = workspaceOne): Record<string, string> {
   };
 }
 
+async function createPilotProcess(key = 'production-pilot') {
+  return app.inject({
+    headers: operatorHeaders(),
+    method: 'POST',
+    payload: {
+      clientId: 'client_one',
+      environment: 'production',
+      key,
+      metadataAllowlist: ['executionUrl'],
+      name: 'Production pilot',
+      slaSeconds: 900,
+      stages: [
+        {
+          key: 'received',
+          name: 'Received',
+          owningTeam: 'Operations',
+          required: true,
+          source: 'make',
+          timeoutSeconds: 120,
+        },
+        {
+          key: 'completed',
+          name: 'Completed',
+          owningTeam: 'Automation',
+          required: true,
+          source: 'n8n',
+          timeoutSeconds: 300,
+        },
+      ],
+    },
+    url: '/v1/processes',
+  });
+}
+
 describe('Outtrace API PostgreSQL integration', () => {
   beforeAll(async () => {
     adminPool = new Pool({ connectionString: testDatabaseUrl });
@@ -801,6 +835,331 @@ describe('Outtrace API PostgreSQL integration', () => {
         status: 'failed',
       },
     ]);
+  });
+
+  it('creates a production process with ordered stages and hash-only scoped credentials', async () => {
+    const created = await createPilotProcess();
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({
+      process: {
+        clientId: 'client_one',
+        connectionStatus: 'awaiting_first_event',
+        environment: 'production',
+        eventCount: 0,
+        key: 'production-pilot',
+        lifecycleStatus: 'active',
+        stageCount: 2,
+      },
+      stages: [
+        { key: 'received', owningTeam: 'Operations', position: 0 },
+        { key: 'completed', owningTeam: 'Automation', position: 1 },
+      ],
+      credential: {
+        key: expect.stringMatching(/^outtrace_process_/),
+        keyId: expect.stringMatching(/^process_key_/),
+      },
+    });
+
+    const processId = created.json().process.id as string;
+    const key = created.json().credential.key as string;
+    const keyId = created.json().credential.keyId as string;
+    const stored = await pool.query<{ key_hash: string }>(
+      `
+        SELECT key_hash
+        FROM process_ingestion_credentials
+        WHERE workspace_id = $1 AND process_id = $2 AND key_id = $3
+      `,
+      [workspaceOne.id, processId, keyId],
+    );
+    expect(stored.rows).toEqual([{ key_hash: sha256Hex(key) }]);
+    expect(JSON.stringify(stored.rows)).not.toContain(key);
+
+    const accepted = await postEvent(
+      eventPayload({
+        eventId: 'process-scoped-event',
+        processKey: 'production-pilot',
+        stage: 'received',
+      }),
+      { key, keyId },
+    );
+    expect(accepted.statusCode).toBe(202);
+
+    const wrongProcess = await postEvent(
+      eventPayload({
+        eventId: 'process-scope-escape',
+        processKey: 'client-onboarding',
+      }),
+      { key, keyId },
+    );
+    expect(wrongProcess.statusCode).toBe(404);
+    expect(wrongProcess.json()).toMatchObject({ error: { code: 'UNKNOWN_PROCESS' } });
+
+    const processState = await pool.query<{
+      connected_at: Date | null;
+      last_event_received_at: Date | null;
+    }>(
+      `
+        SELECT connected_at, last_event_received_at
+        FROM processes
+        WHERE workspace_id = $1 AND id = $2
+      `,
+      [workspaceOne.id, processId],
+    );
+    expect(processState.rows[0]?.connected_at).toBeInstanceOf(Date);
+    expect(processState.rows[0]?.last_event_received_at).toEqual(
+      processState.rows[0]?.connected_at,
+    );
+
+    const anotherCredential = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    expect(anotherCredential.statusCode).toBe(201);
+    expect(anotherCredential.json()).toMatchObject({
+      processId,
+      key: expect.stringMatching(/^outtrace_process_/),
+      keyId: expect.stringMatching(/^process_key_/),
+    });
+    expect(anotherCredential.json().key).not.toBe(key);
+
+    const archived = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { lifecycleStatus: 'archived' },
+      url: `/v1/processes/${processId}`,
+    });
+    expect(archived.statusCode).toBe(200);
+    expect(archived.json()).toMatchObject({
+      id: processId,
+      lifecycleStatus: 'archived',
+    });
+
+    const archivedIngestion = await postEvent(
+      eventPayload({
+        eventId: 'archived-process-event',
+        processKey: 'production-pilot',
+        stage: 'completed',
+      }),
+      { key, keyId },
+    );
+    expect(archivedIngestion.statusCode).toBe(404);
+    expect(archivedIngestion.json()).toMatchObject({ error: { code: 'UNKNOWN_PROCESS' } });
+
+    const processList = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: '/v1/processes',
+    });
+    expect(processList.json().processes).toContainEqual(
+      expect.objectContaining({ id: processId, lifecycleStatus: 'archived' }),
+    );
+  });
+
+  it('records tenant-scoped incident feedback and returns it with incident detail', async () => {
+    const event = await postEvent(eventPayload({ eventId: 'feedback-event', status: 'failed' }));
+    await pool.query(
+      `
+        INSERT INTO incidents (
+          id,
+          workspace_id,
+          process_instance_id,
+          incident_type,
+          severity,
+          affected_stage,
+          technical_message,
+          business_message
+        )
+        VALUES (
+          'incident_feedback_test',
+          $1,
+          $2,
+          'reported_failure',
+          'high',
+          'workspace_created',
+          'A failure was reported.',
+          'Workspace creation failed.'
+        )
+      `,
+      [workspaceOne.id, event.json().processInstanceId],
+    );
+
+    const invalid = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PUT',
+      payload: { verdict: 'false_positive' },
+      url: '/v1/incidents/incident_feedback_test/feedback',
+    });
+    expect(invalid.statusCode).toBe(400);
+
+    const recorded = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PUT',
+      payload: {
+        note: 'The timeout is intentionally short in this workflow.',
+        reason: 'timeout_too_short',
+        verdict: 'false_positive',
+      },
+      url: '/v1/incidents/incident_feedback_test/feedback',
+    });
+    expect(recorded.statusCode).toBe(200);
+    expect(recorded.json()).toMatchObject({
+      incidentId: 'incident_feedback_test',
+      reason: 'timeout_too_short',
+      reviewedBy: 'Workspace owner',
+      verdict: 'false_positive',
+    });
+    expect(
+      (
+        await pool.query<{ action: string }>(
+          `SELECT action FROM incident_audit_log WHERE incident_id = $1`,
+          ['incident_feedback_test'],
+        )
+      ).rows,
+    ).toContainEqual({ action: 'feedback_recorded' });
+
+    const otherTenant = await app.inject({
+      headers: operatorHeaders(workspaceTwo),
+      method: 'PUT',
+      payload: { verdict: 'genuine' },
+      url: '/v1/incidents/incident_feedback_test/feedback',
+    });
+    expect(otherTenant.statusCode).toBe(404);
+  });
+
+  it('returns a production-only activation and 28-day incident quality summary', async () => {
+    const created = await createPilotProcess('summary-process');
+    const key = created.json().credential.key as string;
+    const keyId = created.json().credential.keyId as string;
+    const processId = created.json().process.id as string;
+    const archived = await createPilotProcess('summary-archived');
+    await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { lifecycleStatus: 'archived' },
+      url: `/v1/processes/${archived.json().process.id as string}`,
+    });
+    await postEvent(
+      eventPayload({
+        eventId: 'summary-event',
+        processKey: 'summary-process',
+        stage: 'received',
+      }),
+      { key, keyId },
+    );
+    const sandboxEvent = await postEvent(
+      eventPayload({
+        eventId: 'summary-sandbox-event',
+        instanceKey: 'summary-sandbox-instance',
+      }),
+    );
+    const instance = await pool.query<{ id: string }>(
+      `SELECT id FROM process_instances WHERE workspace_id = $1 AND process_id = $2`,
+      [workspaceOne.id, processId],
+    );
+    await pool.query(
+      `
+        INSERT INTO incidents (
+          id,
+          workspace_id,
+          process_instance_id,
+          incident_type,
+          severity,
+          affected_stage,
+          technical_message,
+          business_message,
+          created_at
+        )
+        VALUES
+          (
+            'incident_summary_recent',
+            $1,
+            $2,
+            'missing_stage',
+            'medium',
+            'completed',
+            'Completion is overdue.',
+            'The pilot process is delayed.',
+            now() - interval '1 day'
+          ),
+          (
+            'incident_summary_old',
+            $1,
+            $2,
+            'sla_violation',
+            'critical',
+            NULL,
+            'The SLA was exceeded.',
+            'The pilot process exceeded its SLA.',
+            now() - interval '29 days'
+          ),
+          (
+            'incident_summary_sandbox',
+            $1,
+            $3,
+            'reported_failure',
+            'high',
+            'workspace_created',
+            'A sandbox event reported failure.',
+            'The sandbox process reported failure.',
+            now() - interval '1 day'
+          )
+      `,
+      [workspaceOne.id, instance.rows[0]!.id, sandboxEvent.json().processInstanceId],
+    );
+    await pool.query(
+      `
+        INSERT INTO incident_feedback (
+          id,
+          workspace_id,
+          incident_id,
+          verdict,
+          reason,
+          reviewed_by_name
+        )
+        VALUES (
+          'feedback_summary_recent',
+          $1,
+          'incident_summary_recent',
+          'false_positive',
+          'timeout_too_short',
+          'Workspace owner'
+        )
+      `,
+      [workspaceOne.id],
+    );
+
+    const summary = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: '/v1/pilot/summary',
+    });
+    expect(summary.statusCode).toBe(200);
+    expect(summary.json()).toMatchObject({
+      windowDays: 28,
+      activation: {
+        totalProcesses: 1,
+        connectedProcesses: 1,
+        awaitingFirstEvent: 0,
+        connectionRate: 1,
+      },
+      quality: {
+        incidentsDetected: 1,
+        reviewedIncidents: 1,
+        genuineIncidents: 0,
+        falsePositiveIncidents: 1,
+        unreviewedIncidents: 0,
+        falsePositiveRate: 1,
+      },
+      processes: [
+        {
+          id: processId,
+          connectionStatus: 'connected',
+          eventCount: 1,
+          key: 'summary-process',
+        },
+      ],
+    });
   });
 
   it('reports PostgreSQL and Redis health without secrets', async () => {

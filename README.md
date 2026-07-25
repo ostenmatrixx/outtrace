@@ -1,24 +1,28 @@
 # Outtrace
 
 Outtrace is an open-source, cross-platform business-process observability product for automation
-agencies. Phase 3 adds agency-safe client separation, role-based access, reporting, and retention
-controls to the incident workflow:
+agencies. Phase 4 adds a controlled production-pilot loop to the existing agency-safe incident
+workflow:
 
 ```text
 n8n / Make / custom service
+  → owner-created sandbox or production process with ordered stages
+  → one-time process-scoped ingestion credential
   → authenticated POST /v1/events
   → validation and metadata minimization
   → transactional PostgreSQL event + evaluation outbox
   → retryable BullMQ incident evaluation
   → failure / missing-stage / SLA / sequence detection
   → authenticated incident inbox + optional Slack alert
-  → client-scoped reports and role-aware agency administration
+  → genuine / false-positive operator feedback
+  → fixed rolling 28-day pilot summary
 ```
 
 Incidents are correlated to the affected client, process, instance, stage, source execution, and
 cross-platform event timeline. Owners administer clients, members, process data policies, and
-retention. Operators manage incidents across the workspace. Viewers receive read-only access to
-only their assigned clients.
+retention and create pilot process definitions. Owners and operators manage incidents, classify
+their quality, and review pilot evidence. Viewers receive read-only access to only their assigned
+clients.
 
 ## Requirements
 
@@ -69,9 +73,100 @@ only their assigned clients.
    creates a workspace owner with this credential. The dashboard keeps credentials in the current
    browser tab only; they are never compiled into its bundle.
 
+The development seed remains the fastest local setup and uses its legacy workspace ingestion key.
+Production pilot integrations should use an owner-created process and its process-scoped
+credential.
+
+## Connect a pilot process
+
+Create the complete definition as an owner. Stage array order is evaluation order:
+
+```bash
+curl --request POST http://localhost:3000/v1/processes \
+  --header 'content-type: application/json' \
+  --header 'x-outtrace-operator-key-id: REPLACE_WITH_OPERATOR_KEY_ID' \
+  --header 'x-outtrace-operator-key: REPLACE_WITH_OPERATOR_KEY' \
+  --data '{
+    "clientId": "client_REPLACE_ME",
+    "key": "client-onboarding-sandbox",
+    "name": "Client onboarding sandbox",
+    "environment": "sandbox",
+    "slaSeconds": 1800,
+    "metadataAllowlist": ["executionId", "executionUrl", "externalReference"],
+    "stages": [
+      {
+        "key": "payment_received",
+        "name": "Payment received",
+        "required": true,
+        "timeoutSeconds": 300,
+        "source": "make",
+        "owningTeam": "Revenue operations"
+      },
+      {
+        "key": "workspace_created",
+        "name": "Workspace created",
+        "required": true,
+        "timeoutSeconds": 600,
+        "source": "n8n",
+        "owningTeam": "Automation"
+      }
+    ]
+  }'
+```
+
+The `201` response contains the process, ordered stages, and a process-scoped `credential` with
+`keyId`, plaintext `key`, and `createdAt`. The plaintext is returned once. Copy it directly to the
+source platform's encrypted credential or secret store; it cannot be retrieved later. Process key,
+environment, and stages are immutable in this pilot, so create a replacement process for a material
+definition change. New processes start with `lifecycleStatus: "active"`. After a replacement is
+connected, an owner can archive the superseded definition with
+`PATCH /v1/processes/:processId`.
+
+Start in `sandbox`. Send at least one complete successful instance through every required stage,
+then create a separate `production` process and credential. A process is
+`awaiting_first_event` until Outtrace persists its first non-duplicate event. That event persists
+`connectedAt`; later newly persisted events update `lastEventAt`, and both timestamps survive
+service restarts.
+
+All platforms use the event contract shown below. Configure:
+
+- n8n with an HTTP Request node and encrypted n8n credential for the two Outtrace headers;
+- Make with an HTTP Make a request module and secured connection or secret variables; or
+- a custom service with the header values loaded from its runtime secret store.
+
+Use placeholders or environment variables in code and documentation:
+
+```bash
+curl --request POST "${OUTTRACE_API_BASE_URL}/v1/events" \
+  --header 'content-type: application/json' \
+  --header "x-outtrace-key-id: ${OUTTRACE_PROCESS_KEY_ID}" \
+  --header "x-outtrace-key: ${OUTTRACE_PROCESS_KEY}" \
+  --data '{
+    "eventId": "evt_unique_for_this_stage_attempt",
+    "processKey": "client-onboarding-sandbox",
+    "instanceKey": "customer_4821_sandbox",
+    "stage": "workspace_created",
+    "status": "completed",
+    "source": "n8n",
+    "occurredAt": "2026-07-25T08:00:00Z",
+    "metadata": {
+      "executionId": "sandbox-run-42",
+      "executionUrl": "https://automation.example/executions/42"
+    }
+  }'
+```
+
+The credential is accepted only when the payload's `processKey` matches its process. Use one stable
+`instanceKey` across the complete business occurrence and one unique, retry-stable `eventId` per
+stage attempt. Never put these credentials in source code, workflow names, logs, screenshots,
+metadata, or `VITE_*` variables.
+
+The complete onboarding, canary, evidence, and rollback procedure is in the
+[Phase 4 pilot runbook](docs/phase-4-pilot.md).
+
 ## Send a test event
 
-With the values from `.env.example`:
+For a local smoke test using the existing development seed and values from `.env.example`:
 
 ```bash
 curl --request POST http://localhost:3000/v1/events \
@@ -138,7 +233,7 @@ returns the same process-instance ID.
 | `npm test`                 | Run unit tests                                             |
 | `npm run test:integration` | Run PostgreSQL integration tests                           |
 | `npm run build`            | Build contracts and all applications                       |
-| `npm run verify`           | Run the complete Phase 3 quality suite                     |
+| `npm run verify`           | Run the complete Phase 4 quality suite                     |
 
 The integration command loads `TEST_DATABASE_URL` from the root `.env` and fails if it is missing
 or unreachable. It creates a random PostgreSQL schema, migrates and tests inside it, then removes
@@ -151,9 +246,9 @@ and updates the seeded credential hash.
 
 ## Environment reference
 
-`DEV_INGESTION_KEY`, `DEV_OPERATOR_KEY`, generated member access keys, and database passwords are
-secrets. Variables prefixed with `VITE_` are compiled into browser code and must never contain
-credentials.
+`DEV_INGESTION_KEY`, `DEV_OPERATOR_KEY`, generated member access keys, generated process ingestion
+keys, and database passwords are secrets. Variables prefixed with `VITE_` are compiled into browser
+code and must never contain credentials.
 
 | Variable                                            | Consumer          | Required/default                 | Notes                                           |
 | --------------------------------------------------- | ----------------- | -------------------------------- | ----------------------------------------------- |
@@ -225,9 +320,16 @@ Clients send a non-secret key identifier in `x-outtrace-key-id` and its secret i
 `x-outtrace-key`. PostgreSQL stores only the SHA-256 secret hash. The API hashes the presented
 secret and performs constant-time comparison.
 
-Authentication resolves the workspace before process lookup. Process lookup, event idempotency, and
-all persisted relationships are scoped to that workspace. Process keys are unique per workspace
-because the Phase 1 event contract contains no independent client selector.
+Owner-created processes receive process-scoped ingestion credentials. Their plaintext secret is
+returned once at creation or issuance and is never returned by a read endpoint. A scoped credential
+can submit events only for its exact process key. Issuing another credential with
+`POST /v1/processes/:processId/credentials` adds a new valid credential; it does not revoke older
+credentials. Existing workspace-scoped credentials remain valid for backward compatibility.
+
+Authentication resolves the workspace and, when present, the credential's process before event
+persistence. Process lookup, event idempotency, and all persisted relationships are scoped to that
+workspace. Process keys are unique per workspace because the event contract contains no independent
+client selector.
 
 The ingestion route is rate-limited before database persistence. The limit is keyed from the
 request origin and ingestion-key identifier; `429` responses include retry guidance without
@@ -239,8 +341,10 @@ Never place an ingestion key in `VITE_*` variables or dashboard source. Variable
 Dashboard requests use a separate member access key. Only a key identifier and SHA-256 secret hash
 are stored. The invitation response reveals the generated secret once. The roles are:
 
-- `owner`: administer clients, members, process policies, retention, reports, and incidents;
-- `operator`: operate incidents and view all workspace clients and reports; and
+- `owner`: administer clients, members, process definitions and policies, credentials, retention,
+  reports, pilot evidence, and incidents;
+- `operator`: operate and classify incidents and view all workspace clients, reports, and pilot
+  evidence; and
 - `viewer`: read incidents and reports only for explicitly assigned clients.
 
 The API enforces role and client access on every route. Hiding controls in the dashboard is a
@@ -255,6 +359,9 @@ as the seeded owner so existing local setups can migrate without losing access.
 - Correlation, event insertion, and instance-state changes occur in one PostgreSQL transaction.
 - Out-of-order events remain in the timeline, `started_at` tracks the earliest event, and current
   state uses `occurredAt` plus external event ID as a deterministic tie-breaker.
+- Process creation stores its complete ordered stage definition and credential atomically.
+- The first persisted non-duplicate event fixes `connectedAt`; later newly persisted events advance
+  `lastEventAt` without changing the original connection time.
 - Database errors are converted to safe structured responses; SQL, credentials, and stack traces are
   not returned.
 
@@ -319,50 +426,108 @@ backoff and retains attempt/error state for inspection.
 Operational endpoints require `x-outtrace-operator-key-id` and `x-outtrace-operator-key`; queries
 are always scoped to the authenticated workspace.
 
-| Method  | Endpoint                          | Purpose                                          |
-| ------- | --------------------------------- | ------------------------------------------------ |
-| `GET`   | `/v1/incidents`                   | List/filter incidents                            |
-| `GET`   | `/v1/incidents/:incidentId`       | Read business context, notes, and event timeline |
-| `PATCH` | `/v1/incidents/:incidentId`       | Assign, acknowledge, or resolve                  |
-| `POST`  | `/v1/incidents/:incidentId/notes` | Add an internal note                             |
+| Method  | Endpoint                             | Purpose                                          |
+| ------- | ------------------------------------ | ------------------------------------------------ |
+| `GET`   | `/v1/incidents`                      | List/filter incidents                            |
+| `GET`   | `/v1/incidents/:incidentId`          | Read business context, notes, and event timeline |
+| `PATCH` | `/v1/incidents/:incidentId`          | Assign, acknowledge, or resolve                  |
+| `POST`  | `/v1/incidents/:incidentId/notes`    | Add an internal note                             |
+| `PUT`   | `/v1/incidents/:incidentId/feedback` | Classify genuine or false-positive evidence      |
 
 List filters include `status`, `severity`, `type`, `clientId`, `processId`, and `source`. Assignment,
 status changes, automatic lifecycle changes, and notes produce tenant-scoped audit records.
+
+Owners and operators with access to the incident's client can upsert feedback. `false_positive`
+requires `timeout_too_short`, `stage_not_required`, `expected_sequence_variation`,
+`test_or_duplicate_traffic`, or `other`; `genuine` accepts no false-positive reason. An optional
+note can add evidence. Feedback is independent of acknowledgement and resolution: a verdict never
+resolves an incident, and automatic lifecycle changes never erase the verdict. Each update appends
+a `feedback_recorded` audit entry.
 
 ## Agency API
 
 All endpoints require the operator/member headers used by the incident API.
 
-| Method  | Endpoint                 | Role/access              | Purpose                               |
-| ------- | ------------------------ | ------------------------ | ------------------------------------- |
-| `GET`   | `/v1/session`            | Any member               | Resolve role and visible client scope |
-| `GET`   | `/v1/clients`            | Any member               | List visible clients                  |
-| `POST`  | `/v1/clients`            | Owner                    | Create a client boundary              |
-| `GET`   | `/v1/clients/:id/report` | Assigned client or above | Read lifetime reliability metrics     |
-| `GET`   | `/v1/members`            | Owner                    | List members and access state         |
-| `POST`  | `/v1/members`            | Owner                    | Invite a member and issue a key once  |
-| `PATCH` | `/v1/members/:id`        | Owner                    | Change role, status, or client access |
-| `GET`   | `/v1/processes`          | Any member               | List processes in visible clients     |
-| `PATCH` | `/v1/processes/:id`      | Owner                    | Assign client and metadata allowlist  |
-| `GET`   | `/v1/workspace/settings` | Owner                    | Read event retention policy           |
-| `PATCH` | `/v1/workspace/settings` | Owner                    | Update event retention policy         |
+| Method  | Endpoint                               | Role/access              | Purpose                                   |
+| ------- | -------------------------------------- | ------------------------ | ----------------------------------------- |
+| `GET`   | `/v1/session`                          | Any member               | Resolve role and visible client scope     |
+| `GET`   | `/v1/clients`                          | Any member               | List visible clients                      |
+| `POST`  | `/v1/clients`                          | Owner                    | Create a client boundary                  |
+| `GET`   | `/v1/clients/:clientId/report`         | Assigned client or above | Read lifetime reliability metrics         |
+| `GET`   | `/v1/members`                          | Owner                    | List members and access state             |
+| `POST`  | `/v1/members`                          | Owner                    | Invite a member and issue a key once      |
+| `PATCH` | `/v1/members/:memberId`                | Owner                    | Change role, status, or client access     |
+| `GET`   | `/v1/processes`                        | Any member               | List processes and connection evidence    |
+| `POST`  | `/v1/processes`                        | Owner                    | Create process, stages, and one-time key  |
+| `POST`  | `/v1/processes/:processId/credentials` | Owner                    | Issue another one-time process credential |
+| `PATCH` | `/v1/processes/:processId`             | Owner                    | Assign client, lifecycle, or allowlist    |
+| `GET`   | `/v1/workspace/settings`               | Owner                    | Read event retention policy               |
+| `PATCH` | `/v1/workspace/settings`               | Owner                    | Update event retention policy             |
 
 Client reports include instance completion rate, incident counts, resolved incidents, median
 resolution time, and the most unreliable stage. Owner changes and completed retention runs are
 recorded in `workspace_audit_log`.
 
-## Phase 3 boundaries
+An owner archives or reactivates a process with:
 
-- The development seed creates one process and stage definition; a process-definition editor beyond
-  client assignment and metadata policy is still pending.
+```json
+{
+  "lifecycleStatus": "archived"
+}
+```
+
+sent to `PATCH /v1/processes/:processId`. Archived processes retain their history but reject new
+event ingestion, even with an existing process credential. Use `"active"` to reactivate one.
+`GET /v1/processes` retains both states and exposes `lifecycleStatus`; only the pilot summary filters
+archived processes out.
+
+## Pilot summary
+
+`GET /v1/pilot/summary` is available to owners and operators and accepts no date parameters. Its
+incident-quality window is the server-fixed half-open interval
+`[generatedAt - 28 days, generatedAt)`.
+
+| Field                       | Definition                                                                    |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `incidentsDetected`         | Production-process incidents created in the quality window                    |
+| `reviewedIncidents`         | Genuine plus false-positive incidents                                         |
+| `unreviewedIncidents`       | Detected incidents without feedback                                           |
+| `falsePositiveRate`         | False positives divided by reviewed incidents; `null` when none are reviewed  |
+| `totalProcesses`            | All active production processes, regardless of creation date                  |
+| `connectedProcesses`        | Active production processes with a persisted first non-duplicate event        |
+| `connectionRate`            | Connected divided by total production processes; zero when there are none     |
+| `medianSecondsToFirstEvent` | Median process-creation-to-connection time for connected production processes |
+
+Always report reviewed and unreviewed counts with the false-positive rate. Dividing by all detected
+incidents would hide missing reviews. Sandbox incidents do not contribute to signal-quality
+metrics. Archived production processes retain their incident evidence, while only active
+production processes contribute to activation. The summary also returns active production process
+event counts, connection state, `connectedAt`, and `lastEventAt`. A process `eventCount` is the
+number of raw events currently retained, so it can decrease under the workspace retention policy
+and must not be used for billing.
+
+## Phase 4 boundaries
+
+- Owners can create process definitions, but process key, environment, stage order, and stage rules
+  are immutable. Create a replacement process for material definition changes, then archive the
+  superseded process.
+- Owners can archive or reactivate a process. Archived processes reject ingestion and are excluded
+  from pilot activation and its process list; their existing evidence remains available.
+- A process credential is shown once and process-scoped. Credential expiry and revocation are not
+  included; issuing another credential does not invalidate earlier credentials.
 - Invitations issue a one-time access key through the API; email delivery, password login, SSO,
   recovery, and key rotation are not included.
 - Slack is configured per deployment through environment variables. Per-workspace notification
   settings and client/channel routing remain future work.
 - Client reports are lifetime summaries; date-range filtering and scheduled exports are not yet
-  included.
+  included. The separate pilot-quality view has one fixed rolling 28-day window.
 - Retention removes expired raw events while preserving incidents, audit records, and summary
   entities.
+- Pricing is tested through structured interviews using the PRD Solo ($49/month), Agency
+  ($199/month), and Agency Pro ($499/month) hypotheses. Billing, checkout, plan enforcement, and
+  overage metering are not included.
+- Recovery is an evidence and decision experiment. Outtrace does not retry, replay, call, approve,
+  compensate, or automatically remediate customer workflows.
 - Compose runs PostgreSQL and Redis only, not application containers.
 - Production deployment, CI, backups/recovery, and hosted secret management are not included.
 
@@ -382,6 +547,18 @@ seed.
 
 The development seed creates the `DEV_PROCESS_KEY` from the environment. The request's
 `processKey` must match it exactly and the process must belong to the authenticated workspace.
+
+For an owner-created pilot process, the payload's `processKey` must also match the process bound to
+the presented process credential. Sandbox and production definitions have distinct keys and should
+use distinct credentials.
+
+### A process credential was lost or exposed
+
+An owner can issue another secret with `POST /v1/processes/:processId/credentials`, but the endpoint
+does not revoke the old credential. A lost secret can simply be replaced in the source platform. If
+a secret may be exposed, stop the source integration, remove its stored copy, restrict deployment
+access, and arrange operational invalidation before resuming. The full response procedure is in the
+[Phase 4 pilot runbook](docs/phase-4-pilot.md).
 
 ### Health is degraded
 
@@ -422,4 +599,6 @@ public local-development value.
 - [ADR 0001: Phase 1 foundation and ingestion boundaries](docs/architecture/0001-phase-1-foundation.md)
 - [ADR 0002: Durable Phase 2 incident evaluation](docs/architecture/0002-phase-2-incidents.md)
 - [ADR 0003: Phase 3 agency access and data governance](docs/architecture/0003-phase-3-agency-support.md)
+- [ADR 0004: Phase 4 pilot onboarding and evidence model](docs/architecture/0004-phase-4-pilot.md)
+- [Phase 4 pilot runbook](docs/phase-4-pilot.md)
 - [Product requirements](OUTTRACE_PRD.md)

@@ -1,7 +1,10 @@
 import {
+  incidentFeedbackSchema,
   incidentDetailSchema,
   incidentListResponseSchema,
   type IncidentDetail,
+  type IncidentFeedback,
+  type IncidentFeedbackUpdate,
   type IncidentListResponse,
   type IncidentNoteCreate,
   type IncidentStatusUpdate,
@@ -122,4 +125,21 @@ export async function postIncidentNote(
     },
   );
   return incidentDetailSchema.parse(await responseJson(response));
+}
+
+export async function putIncidentFeedback(
+  apiBaseUrl: string,
+  session: OperatorSession,
+  incidentId: string,
+  feedback: IncidentFeedbackUpdate,
+): Promise<IncidentFeedback> {
+  const response = await fetch(
+    `${apiBaseUrl}/v1/incidents/${encodeURIComponent(incidentId)}/feedback`,
+    {
+      method: 'PUT',
+      headers: operatorHeaders(session),
+      body: JSON.stringify(feedback),
+    },
+  );
+  return incidentFeedbackSchema.parse(await responseJson(response));
 }

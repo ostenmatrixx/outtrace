@@ -1,4 +1,5 @@
 import {
+  incidentFeedbackUpdateSchema,
   incidentNoteCreateSchema,
   incidentSeverities,
   incidentStatuses,
@@ -9,7 +10,13 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { HttpError } from '../errors.js';
-import { addIncidentNote, getIncident, listIncidents, updateIncident } from '../incident-store.js';
+import {
+  addIncidentNote,
+  getIncident,
+  listIncidents,
+  recordIncidentFeedback,
+  updateIncident,
+} from '../incident-store.js';
 import {
   authenticateOperatorRequest,
   requireClientAccess,
@@ -112,6 +119,28 @@ export async function registerIncidentRoutes(app: FastifyInstance): Promise<void
         { ...note, author: request.outtraceOperator!.name },
       );
       return reply.code(201).send(incident);
+    },
+  );
+
+  app.put(
+    '/v1/incidents/:incidentId/feedback',
+    { preHandler: (request) => authenticateOperatorRequest(request, app) },
+    async (request) => {
+      requireRole(request.outtraceOperator!, ['owner', 'operator']);
+      const { incidentId } = parseOrThrow(paramsSchema, request.params);
+      const existing = await getIncident(
+        app.outtrace.pool,
+        request.outtraceWorkspaceId!,
+        incidentId,
+      );
+      requireClientAccess(request.outtraceOperator!, existing.client.id);
+      const incident = await recordIncidentFeedback(
+        app.outtrace.pool,
+        request.outtraceOperator!,
+        incidentId,
+        parseOrThrow(incidentFeedbackUpdateSchema, request.body),
+      );
+      return incident.feedback;
     },
   );
 }

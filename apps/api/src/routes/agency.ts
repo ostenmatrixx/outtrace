@@ -2,6 +2,7 @@ import {
   clientCreateSchema,
   memberInviteSchema,
   memberUpdateSchema,
+  processCreateSchema,
   processUpdateSchema,
   workspaceSettingsSchema,
 } from '@outtrace/contracts';
@@ -10,6 +11,8 @@ import { z } from 'zod';
 
 import {
   createClient,
+  createProcess,
+  createProcessCredential,
   getClientReliabilityReport,
   getWorkspaceSettings,
   inviteMember,
@@ -108,6 +111,31 @@ export async function registerAgencyRoutes(app: FastifyInstance): Promise<void> 
   app.get('/v1/processes', { preHandler: authenticated }, async (request) => ({
     processes: await listProcesses(app.outtrace.pool, request.outtraceOperator!),
   }));
+
+  app.post('/v1/processes', { preHandler: authenticated }, async (request, reply) => {
+    requireRole(request.outtraceOperator!, ['owner']);
+    const process = await createProcess(
+      app.outtrace.pool,
+      request.outtraceOperator!,
+      parseOrThrow(processCreateSchema, request.body),
+    );
+    return reply.code(201).send(process);
+  });
+
+  app.post(
+    '/v1/processes/:processId/credentials',
+    { preHandler: authenticated },
+    async (request, reply) => {
+      requireRole(request.outtraceOperator!, ['owner']);
+      const { processId } = parseOrThrow(processParamsSchema, request.params);
+      const credential = await createProcessCredential(
+        app.outtrace.pool,
+        request.outtraceOperator!,
+        processId,
+      );
+      return reply.code(201).send(credential);
+    },
+  );
 
   app.patch('/v1/processes/:processId', { preHandler: authenticated }, async (request) => {
     requireRole(request.outtraceOperator!, ['owner']);
