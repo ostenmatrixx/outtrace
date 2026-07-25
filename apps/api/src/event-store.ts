@@ -19,6 +19,7 @@ interface InstanceRow extends IdRow {
 }
 
 interface DuplicateRow extends pg.QueryResultRow {
+  process_id: string;
   process_instance_id: string;
 }
 
@@ -26,6 +27,7 @@ export async function persistEvent(
   pool: pg.Pool,
   workspaceId: string,
   event: IngestEvent,
+  credentialProcessId: string | null = null,
 ): Promise<IngestEventResponse> {
   let client: pg.PoolClient | undefined;
   let transactionStarted = false;
@@ -44,9 +46,13 @@ export async function persistEvent(
       `
         SELECT id, metadata_allowlist
         FROM processes
-        WHERE workspace_id = $1 AND key = $2
+        WHERE
+          workspace_id = $1
+          AND key = $2
+          AND lifecycle_status = 'active'
+          AND ($3::text IS NULL OR id = $3)
       `,
-      [workspaceId, event.processKey],
+      [workspaceId, event.processKey, credentialProcessId],
     );
     const processRecord = processResult.rows[0];
 
@@ -60,15 +66,25 @@ export async function persistEvent(
 
     const duplicateResult = await client.query<DuplicateRow>(
       `
-        SELECT process_instance_id
+        SELECT events.process_instance_id, process_instances.process_id
         FROM events
-        WHERE workspace_id = $1 AND external_event_id = $2
+        JOIN process_instances
+          ON process_instances.workspace_id = events.workspace_id
+          AND process_instances.id = events.process_instance_id
+        WHERE events.workspace_id = $1 AND events.external_event_id = $2
       `,
       [workspaceId, event.eventId],
     );
     const duplicate = duplicateResult.rows[0];
 
     if (duplicate) {
+      if (credentialProcessId !== null && duplicate.process_id !== credentialProcessId) {
+        throw new HttpError(
+          404,
+          'UNKNOWN_PROCESS',
+          'No process with that key exists in the authenticated workspace.',
+        );
+      }
       await client.query('COMMIT');
       transactionStarted = false;
       return {
@@ -136,9 +152,12 @@ export async function persistEvent(
     if (eventInsert.rowCount === 0) {
       const concurrentlyInserted = await client.query<DuplicateRow>(
         `
-          SELECT process_instance_id
+          SELECT events.process_instance_id, process_instances.process_id
           FROM events
-          WHERE workspace_id = $1 AND external_event_id = $2
+          JOIN process_instances
+            ON process_instances.workspace_id = events.workspace_id
+            AND process_instances.id = events.process_instance_id
+          WHERE events.workspace_id = $1 AND events.external_event_id = $2
         `,
         [workspaceId, event.eventId],
       );
@@ -146,6 +165,13 @@ export async function persistEvent(
 
       if (!original) {
         throw new Error('Conflicting event could not be resolved.');
+      }
+      if (credentialProcessId !== null && original.process_id !== credentialProcessId) {
+        throw new HttpError(
+          404,
+          'UNKNOWN_PROCESS',
+          'No process with that key exists in the authenticated workspace.',
+        );
       }
 
       if (instance.inserted && original.process_instance_id !== instance.id) {
@@ -252,6 +278,18 @@ export async function persistEvent(
           AND workspace_id = $6
       `,
       [event.status, event.stage, event.occurredAt, event.eventId, instance.id, workspaceId],
+    );
+
+    await client.query(
+      `
+        UPDATE processes
+        SET
+          connected_at = COALESCE(connected_at, now()),
+          last_event_received_at = GREATEST(COALESCE(last_event_received_at, now()), now()),
+          updated_at = now()
+        WHERE workspace_id = $1 AND id = $2
+      `,
+      [workspaceId, processRecord.id],
     );
 
     await client.query('COMMIT');

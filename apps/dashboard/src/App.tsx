@@ -1,13 +1,17 @@
 import type {
   IncidentDetail,
+  IncidentFalsePositiveReason,
+  IncidentFeedbackUpdate,
   IncidentSeverity,
   IncidentStatus,
   IncidentSummary,
   IncidentType,
+  WorkspaceRole,
 } from '@outtrace/contracts';
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { AgencyPanel } from './AgencyPanel';
+import { PilotPanel } from './PilotPanel';
 import {
   type HealthSnapshot,
   type ServiceHealth,
@@ -22,6 +26,7 @@ import {
   loadOperatorSession,
   patchIncident,
   postIncidentNote,
+  putIncidentFeedback,
   saveOperatorSession,
   type OperatorSession,
 } from './incidents';
@@ -39,6 +44,14 @@ const INCIDENT_TYPE_LABELS: Record<IncidentType, string> = {
   missing_stage: 'Missing stage',
   sla_violation: 'SLA violation',
   unexpected_sequence: 'Unexpected sequence',
+};
+
+const FALSE_POSITIVE_REASON_LABELS: Record<IncidentFalsePositiveReason, string> = {
+  timeout_too_short: 'Timeout was too short',
+  stage_not_required: 'Stage is not required',
+  expected_sequence_variation: 'Expected sequence variation',
+  test_or_duplicate_traffic: 'Test or duplicate traffic',
+  other: 'Other',
 };
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000').replace(
@@ -134,22 +147,28 @@ function ShellNavigation() {
             </a>
           </li>
           <li>
-            <a className="nav-item" href="#incidents">
+            <a className="nav-item nav-item--active" href="#pilot" aria-current="location">
               <span aria-hidden="true">02</span>
+              Pilot
+            </a>
+          </li>
+          <li>
+            <a className="nav-item" href="#incidents">
+              <span aria-hidden="true">03</span>
               Incidents
             </a>
           </li>
           <li>
-            <a className="nav-item nav-item--active" href="#agency" aria-current="page">
-              <span aria-hidden="true">03</span>
+            <a className="nav-item" href="#agency">
+              <span aria-hidden="true">04</span>
               Agency
             </a>
           </li>
         </ul>
       </nav>
       <div className="sidebar__footer">
-        <span>Agency operations</span>
-        <strong>Phase 3</strong>
+        <span>Pilot operations</span>
+        <strong>Phase 4</strong>
       </div>
     </aside>
   );
@@ -251,14 +270,27 @@ function IncidentDetailPanel({
   busy,
   onUpdate,
   onNote,
+  onFeedback,
+  canClassify,
 }: {
   incident: IncidentDetail | null;
   busy: boolean;
   onUpdate: (update: { status?: 'acknowledged' | 'resolved'; assignedTo?: string | null }) => void;
   onNote: (body: string) => void;
+  onFeedback: (feedback: IncidentFeedbackUpdate) => void;
+  canClassify: boolean;
 }) {
   const [assignee, setAssignee] = useState(incident?.assignedTo ?? '');
   const [note, setNote] = useState('');
+  const [verdict, setVerdict] = useState<'genuine' | 'false_positive' | ''>(
+    incident?.feedback?.verdict ?? '',
+  );
+  const [reason, setReason] = useState<IncidentFalsePositiveReason | ''>(
+    incident?.feedback?.reason ?? '',
+  );
+  const [feedbackNote, setFeedbackNote] = useState(incident?.feedback?.note ?? '');
+  const [feedbackError, setFeedbackError] = useState<string | null>(null);
+
   if (!incident) {
     return (
       <div className="incident-empty">
@@ -336,6 +368,127 @@ function IncidentDetailPanel({
           Save assignment
         </button>
       </form>
+      <section className="incident-feedback" aria-labelledby="feedback-title">
+        <div className="incident-feedback__heading">
+          <div>
+            <p className="section-index">PILOT SIGNAL</p>
+            <h3 id="feedback-title">Classify this detection</h3>
+          </div>
+          {incident.feedback ? (
+            <p className="feedback-review">
+              Reviewed by <strong>{incident.feedback.reviewedBy}</strong>{' '}
+              <time dateTime={incident.feedback.updatedAt}>
+                {new Date(incident.feedback.updatedAt).toLocaleString()}
+              </time>
+            </p>
+          ) : (
+            <p className="feedback-review">Not reviewed</p>
+          )}
+        </div>
+        {canClassify ? (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!verdict) {
+                setFeedbackError('Choose genuine or false positive.');
+                return;
+              }
+              if (verdict === 'false_positive' && !reason) {
+                setFeedbackError('Choose a reason for the false positive.');
+                return;
+              }
+              setFeedbackError(null);
+              onFeedback({
+                verdict,
+                reason: verdict === 'false_positive' ? reason || null : null,
+                note: feedbackNote.trim() || null,
+              });
+            }}
+          >
+            <p>
+              Confirm whether the incident represented a real production problem. This improves the
+              28-day pilot quality signal.
+            </p>
+            <fieldset>
+              <legend>Detection outcome</legend>
+              <label className="choice-row">
+                <input
+                  type="radio"
+                  name="feedbackVerdict"
+                  value="genuine"
+                  checked={verdict === 'genuine'}
+                  onChange={() => {
+                    setVerdict('genuine');
+                    setReason('');
+                  }}
+                />
+                <span>
+                  <strong>Genuine incident</strong>
+                  <small>The process needed operator attention.</small>
+                </span>
+              </label>
+              <label className="choice-row">
+                <input
+                  type="radio"
+                  name="feedbackVerdict"
+                  value="false_positive"
+                  checked={verdict === 'false_positive'}
+                  onChange={() => setVerdict('false_positive')}
+                />
+                <span>
+                  <strong>False positive</strong>
+                  <small>The process was healthy or the rule needs tuning.</small>
+                </span>
+              </label>
+            </fieldset>
+            {verdict === 'false_positive' ? (
+              <label>
+                False-positive reason
+                <select
+                  value={reason}
+                  onChange={(event) =>
+                    setReason(event.target.value as IncidentFalsePositiveReason | '')
+                  }
+                  required
+                >
+                  <option value="">Choose a reason</option>
+                  {Object.entries(FALSE_POSITIVE_REASON_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <label>
+              Review note (optional)
+              <textarea
+                value={feedbackNote}
+                onChange={(event) => setFeedbackNote(event.target.value)}
+                maxLength={2000}
+                placeholder="What confirmed this classification?"
+              />
+            </label>
+            {feedbackError ? (
+              <p className="form-error" role="alert">
+                {feedbackError}
+              </p>
+            ) : null}
+            <button className="primary-button" type="submit" disabled={busy}>
+              {busy
+                ? 'Saving review…'
+                : incident.feedback
+                  ? 'Update classification'
+                  : 'Save classification'}
+            </button>
+          </form>
+        ) : (
+          <p>
+            Incident classification is read-only for viewers. An owner or operator can record the
+            pilot verdict.
+          </p>
+        )}
+      </section>
       <section className="timeline" aria-labelledby="timeline-title">
         <h3 id="timeline-title">Cross-platform timeline</h3>
         <ol>
@@ -405,7 +558,9 @@ export function App() {
   const [selected, setSelected] = useState<IncidentDetail | null>(null);
   const [incidentError, setIncidentError] = useState<string | null>(null);
   const [incidentBusy, setIncidentBusy] = useState(false);
+  const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | null>(null);
   const [filters, setFilters] = useState<DashboardFilters>({});
+  const [pilotRefreshToken, setPilotRefreshToken] = useState(0);
   const initialSession = useRef(session);
   const activeRequest = useRef<AbortController | null>(null);
   const mounted = useRef(false);
@@ -512,6 +667,23 @@ export function App() {
     }
   };
 
+  const classifyIncident = async (feedback: IncidentFeedbackUpdate) => {
+    if (!session || !selected) return;
+    setIncidentBusy(true);
+    setIncidentError(null);
+    try {
+      await putIncidentFeedback(apiBaseUrl, session, selected.id, feedback);
+      setSelected(await fetchIncident(apiBaseUrl, session, selected.id));
+      setPilotRefreshToken((value) => value + 1);
+    } catch (error) {
+      setIncidentError(
+        error instanceof Error ? error.message : 'The incident classification could not be saved.',
+      );
+    } finally {
+      setIncidentBusy(false);
+    }
+  };
+
   const liveMessage = useMemo(() => {
     if (snapshot.overall === 'loading') return 'Checking API, PostgreSQL, and Redis.';
     if (snapshot.overall === 'up') return 'Dependency check complete. All three services are up.';
@@ -529,16 +701,16 @@ export function App() {
       <main id="main-content" className="main-content">
         <header className="page-header" id="overview">
           <div>
-            <p className="eyebrow">Operations workspace / Agency command</p>
-            <h1>One view. Every client.</h1>
+            <p className="eyebrow">Operations workspace / Pilot command</p>
+            <h1>Connect. Verify. Learn.</h1>
             <p className="page-header__intro">
-              Separate every client, control who can see them, and turn process reliability into a
-              report the whole team can act on.
+              Connect production processes, verify the first signal, and measure which detections
+              operators trust across every client.
             </p>
           </div>
-          <div className="phase-stamp" aria-label="Current release phase: Phase 3">
+          <div className="phase-stamp" aria-label="Current release phase: Phase 4">
             <span>Release state</span>
-            <strong>PHASE / 03</strong>
+            <strong>PHASE / 04</strong>
           </div>
         </header>
 
@@ -583,10 +755,19 @@ export function App() {
           </ul>
         </section>
 
+        {session ? (
+          <PilotPanel
+            apiBaseUrl={apiBaseUrl}
+            credentials={session}
+            onRoleResolved={setWorkspaceRole}
+            refreshToken={pilotRefreshToken}
+          />
+        ) : null}
+
         <section className="incident-workspace" id="incidents" aria-labelledby="incidents-title">
           <div className="incident-workspace__heading">
             <div>
-              <p className="section-index">INCIDENT INBOX 002</p>
+              <p className="section-index">INCIDENT INBOX 003</p>
               <h2 id="incidents-title">Active operations</h2>
             </div>
             {session ? (
@@ -598,6 +779,7 @@ export function App() {
                   setSession(null);
                   setIncidents([]);
                   setSelected(null);
+                  setWorkspaceRole(null);
                 }}
               >
                 Lock inbox
@@ -712,11 +894,17 @@ export function App() {
                   )}
                 </div>
                 <IncidentDetailPanel
-                  key={selected?.id ?? 'empty'}
+                  key={
+                    selected
+                      ? `${selected.id}:${selected.updatedAt}:${selected.feedback?.updatedAt ?? 'unreviewed'}`
+                      : 'empty'
+                  }
                   incident={selected}
                   busy={incidentBusy}
                   onUpdate={(update) => void mutateIncident(update)}
                   onNote={(body) => void addNote(body)}
+                  onFeedback={(feedback) => void classifyIncident(feedback)}
+                  canClassify={workspaceRole === 'owner' || workspaceRole === 'operator'}
                 />
               </div>
             </>

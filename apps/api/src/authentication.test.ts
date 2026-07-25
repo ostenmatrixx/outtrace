@@ -9,9 +9,12 @@ function fakePool(
   failure?: Error,
 ): pg.Pool {
   return {
-    async query() {
+    async query(sql: string) {
       if (failure) {
         throw failure;
+      }
+      if (sql.includes('FROM process_ingestion_credentials')) {
+        return { rowCount: 0, rows: [] };
       }
       return { rowCount: row ? 1 : 0, rows: row ? [row] : [] };
     },
@@ -25,7 +28,31 @@ describe('authenticateIngestion', () => {
         fakePool({ id: 'ws_1', ingestion_key_hash: sha256Hex('valid-secret') }),
         { key: 'valid-secret', keyId: 'key_1' },
       ),
-    ).resolves.toBe('ws_1');
+    ).resolves.toEqual({ processId: null, workspaceId: 'ws_1' });
+  });
+
+  it('resolves a process scope for a valid process credential', async () => {
+    const pool = {
+      async query(sql: string) {
+        if (sql.includes('FROM process_ingestion_credentials')) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                key_hash: sha256Hex('process-secret'),
+                process_id: 'process_1',
+                workspace_id: 'ws_1',
+              },
+            ],
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+    } as unknown as pg.Pool;
+
+    await expect(
+      authenticateIngestion(pool, { key: 'process-secret', keyId: 'process_key_1' }),
+    ).resolves.toEqual({ processId: 'process_1', workspaceId: 'ws_1' });
   });
 
   it.each([

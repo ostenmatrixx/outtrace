@@ -8,7 +8,11 @@ import type {
   MemberInviteResponse,
   MemberSummary,
   MemberUpdate,
+  ProcessCreate,
+  ProcessCreateResponse,
+  ProcessCredentialResponse,
   ProcessSummary,
+  ProcessStage,
   ProcessUpdate,
   WorkspaceSettings,
 } from '@outtrace/contracts';
@@ -38,13 +42,31 @@ interface MemberRow extends pg.QueryResultRow {
 }
 
 interface ProcessRow extends pg.QueryResultRow {
+  connected_at: Date | null;
+  created_at: Date;
+  environment: ProcessSummary['environment'];
+  event_count: number;
   id: string;
   key: string;
+  last_event_received_at: Date | null;
+  lifecycle_status: ProcessSummary['lifecycleStatus'];
   name: string;
   client_id: string;
   client_name: string;
   sla_seconds: number | null;
+  stage_count: number;
   metadata_allowlist: string[];
+}
+
+interface ProcessStageRow extends pg.QueryResultRow {
+  id: string;
+  key: string;
+  name: string;
+  owning_team: string | null;
+  position: number;
+  required: boolean;
+  source: ProcessStage['source'];
+  timeout_seconds: number | null;
 }
 
 const mapClient = (row: ClientRow): ClientSummary => ({
@@ -71,8 +93,27 @@ const mapProcess = (row: ProcessRow): ProcessSummary => ({
   name: row.name,
   clientId: row.client_id,
   clientName: row.client_name,
+  environment: row.environment,
+  lifecycleStatus: row.lifecycle_status,
   slaSeconds: row.sla_seconds,
   metadataAllowlist: row.metadata_allowlist,
+  stageCount: row.stage_count,
+  connectionStatus: row.connected_at === null ? 'awaiting_first_event' : 'connected',
+  eventCount: row.event_count,
+  connectedAt: row.connected_at?.toISOString() ?? null,
+  lastEventAt: row.last_event_received_at?.toISOString() ?? null,
+  createdAt: row.created_at.toISOString(),
+});
+
+const mapProcessStage = (row: ProcessStageRow): ProcessStage => ({
+  id: row.id,
+  key: row.key,
+  name: row.name,
+  owningTeam: row.owning_team,
+  position: row.position,
+  required: row.required,
+  source: row.source,
+  timeoutSeconds: row.timeout_seconds,
 });
 
 function isUniqueViolation(error: unknown): boolean {
@@ -421,6 +462,213 @@ export async function updateMember(
   }
 }
 
+function generateProcessCredential(): { key: string; keyId: string } {
+  return {
+    key: `outtrace_process_${randomBytes(24).toString('base64url')}`,
+    keyId: `process_key_${randomUUID()}`,
+  };
+}
+
+async function insertProcessCredential(
+  client: pg.PoolClient,
+  principal: OperatorPrincipal,
+  processId: string,
+): Promise<ProcessCredentialResponse> {
+  const credential = generateProcessCredential();
+  const inserted = await client.query<{ created_at: Date }>(
+    `
+      INSERT INTO process_ingestion_credentials (
+        id,
+        workspace_id,
+        process_id,
+        key_id,
+        key_hash,
+        created_by_member_id
+      )
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING created_at
+    `,
+    [
+      `credential_${randomUUID()}`,
+      principal.workspaceId,
+      processId,
+      credential.keyId,
+      sha256Hex(credential.key),
+      principal.memberId,
+    ],
+  );
+  await addWorkspaceAudit(
+    client,
+    principal,
+    'process_ingestion_credential_created',
+    'process',
+    processId,
+    { keyId: credential.keyId },
+  );
+  return {
+    processId,
+    keyId: credential.keyId,
+    key: credential.key,
+    createdAt: inserted.rows[0]!.created_at.toISOString(),
+  };
+}
+
+export async function createProcess(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  input: ProcessCreate,
+): Promise<ProcessCreateResponse> {
+  const client = await pool.connect();
+  const processId = `process_${randomUUID()}`;
+  try {
+    await client.query('BEGIN');
+    const clientResult = await client.query<{ name: string }>(
+      `SELECT name FROM clients WHERE workspace_id = $1 AND id = $2`,
+      [principal.workspaceId, input.clientId],
+    );
+    const clientName = clientResult.rows[0]?.name;
+    if (!clientName) throw resourceNotFound('CLIENT_NOT_FOUND', 'client');
+
+    const insertedProcess = await client.query<ProcessRow>(
+      `
+        INSERT INTO processes (
+          id,
+          workspace_id,
+          client_id,
+          key,
+          name,
+          environment,
+          sla_seconds,
+          metadata_allowlist
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text[])
+        RETURNING
+          id,
+          key,
+          name,
+          client_id,
+          $9::text AS client_name,
+          environment,
+          lifecycle_status,
+          sla_seconds,
+          metadata_allowlist,
+          connected_at,
+          last_event_received_at,
+          created_at,
+          $10::int AS stage_count,
+          0::int AS event_count
+      `,
+      [
+        processId,
+        principal.workspaceId,
+        input.clientId,
+        input.key,
+        input.name,
+        input.environment,
+        input.slaSeconds,
+        input.metadataAllowlist,
+        clientName,
+        input.stages.length,
+      ],
+    );
+
+    const stages: ProcessStage[] = [];
+    for (const [position, stage] of input.stages.entries()) {
+      const insertedStage = await client.query<ProcessStageRow>(
+        `
+          INSERT INTO process_stages (
+            id,
+            workspace_id,
+            process_id,
+            key,
+            name,
+            position,
+            required,
+            timeout_seconds,
+            source,
+            owning_team
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING
+            id,
+            key,
+            name,
+            position,
+            required,
+            timeout_seconds,
+            source,
+            owning_team
+        `,
+        [
+          `stage_${randomUUID()}`,
+          principal.workspaceId,
+          processId,
+          stage.key,
+          stage.name,
+          position,
+          stage.required,
+          stage.timeoutSeconds,
+          stage.source,
+          stage.owningTeam,
+        ],
+      );
+      stages.push(mapProcessStage(insertedStage.rows[0]!));
+    }
+
+    const credential = await insertProcessCredential(client, principal, processId);
+    await addWorkspaceAudit(client, principal, 'process_created', 'process', processId, {
+      clientId: input.clientId,
+      environment: input.environment,
+      key: input.key,
+      stageCount: input.stages.length,
+    });
+    await client.query('COMMIT');
+    return {
+      process: mapProcess(insertedProcess.rows[0]!),
+      stages,
+      credential: {
+        keyId: credential.keyId,
+        key: credential.key,
+        createdAt: credential.createdAt,
+      },
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    if (isUniqueViolation(error)) {
+      throw resourceConflict('A process with that key already exists in the workspace.');
+    }
+    throw databaseFailure();
+  } finally {
+    client.release();
+  }
+}
+
+export async function createProcessCredential(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  processId: string,
+): Promise<ProcessCredentialResponse> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const process = await client.query<{ id: string }>(
+      `SELECT id FROM processes WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [principal.workspaceId, processId],
+    );
+    if (!process.rows[0]) throw resourceNotFound('PROCESS_NOT_FOUND', 'process');
+    const credential = await insertProcessCredential(client, principal, processId);
+    await client.query('COMMIT');
+    return credential;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    throw databaseFailure();
+  } finally {
+    client.release();
+  }
+}
+
 export async function listProcesses(
   pool: pg.Pool,
   principal: OperatorPrincipal,
@@ -442,8 +690,30 @@ export async function listProcesses(
           processes.name,
           processes.client_id,
           clients.name AS client_name,
+          processes.environment,
+          processes.lifecycle_status,
           processes.sla_seconds,
-          processes.metadata_allowlist
+          processes.metadata_allowlist,
+          processes.connected_at,
+          processes.last_event_received_at,
+          processes.created_at,
+          (
+            SELECT count(*)::int
+            FROM process_stages
+            WHERE
+              process_stages.workspace_id = processes.workspace_id
+              AND process_stages.process_id = processes.id
+          ) AS stage_count,
+          (
+            SELECT count(*)::int
+            FROM events
+            JOIN process_instances
+              ON process_instances.workspace_id = events.workspace_id
+              AND process_instances.id = events.process_instance_id
+            WHERE
+              events.workspace_id = processes.workspace_id
+              AND process_instances.process_id = processes.id
+          ) AS event_count
         FROM processes
         JOIN clients
           ON clients.workspace_id = processes.workspace_id
@@ -476,8 +746,30 @@ export async function updateProcess(
           processes.name,
           processes.client_id,
           clients.name AS client_name,
+          processes.environment,
+          processes.lifecycle_status,
           processes.sla_seconds,
-          processes.metadata_allowlist
+          processes.metadata_allowlist,
+          processes.connected_at,
+          processes.last_event_received_at,
+          processes.created_at,
+          (
+            SELECT count(*)::int
+            FROM process_stages
+            WHERE
+              process_stages.workspace_id = processes.workspace_id
+              AND process_stages.process_id = processes.id
+          ) AS stage_count,
+          (
+            SELECT count(*)::int
+            FROM events
+            JOIN process_instances
+              ON process_instances.workspace_id = events.workspace_id
+              AND process_instances.id = events.process_instance_id
+            WHERE
+              events.workspace_id = processes.workspace_id
+              AND process_instances.process_id = processes.id
+          ) AS event_count
         FROM processes
         JOIN clients
           ON clients.workspace_id = processes.workspace_id
@@ -496,24 +788,59 @@ export async function updateProcess(
     );
     if (!clientResult.rows[0]) throw resourceNotFound('CLIENT_NOT_FOUND', 'client');
     const allowlist = input.metadataAllowlist ?? process.metadata_allowlist;
+    const lifecycleStatus = input.lifecycleStatus ?? process.lifecycle_status;
     const updated = await client.query<ProcessRow>(
       `
         UPDATE processes
-        SET client_id = $3, metadata_allowlist = $4::text[], updated_at = now()
+        SET
+          client_id = $3,
+          metadata_allowlist = $4::text[],
+          lifecycle_status = $5,
+          updated_at = now()
         WHERE workspace_id = $1 AND id = $2
         RETURNING
           id,
           key,
           name,
           client_id,
-          $5::text AS client_name,
+          $6::text AS client_name,
+          environment,
+          lifecycle_status,
           sla_seconds,
-          metadata_allowlist
+          metadata_allowlist,
+          connected_at,
+          last_event_received_at,
+          created_at,
+          (
+            SELECT count(*)::int
+            FROM process_stages
+            WHERE
+              process_stages.workspace_id = $1
+              AND process_stages.process_id = $2
+          ) AS stage_count,
+          (
+            SELECT count(*)::int
+            FROM events
+            JOIN process_instances
+              ON process_instances.workspace_id = events.workspace_id
+              AND process_instances.id = events.process_instance_id
+            WHERE
+              events.workspace_id = $1
+              AND process_instances.process_id = $2
+          ) AS event_count
       `,
-      [principal.workspaceId, processId, clientId, allowlist, clientResult.rows[0].name],
+      [
+        principal.workspaceId,
+        processId,
+        clientId,
+        allowlist,
+        lifecycleStatus,
+        clientResult.rows[0].name,
+      ],
     );
     await addWorkspaceAudit(client, principal, 'process_updated', 'process', processId, {
       clientId,
+      lifecycleStatus,
       metadataAllowlist: allowlist,
     });
     await client.query('COMMIT');

@@ -9,6 +9,7 @@ import { registerAgencyRoutes } from './routes/agency.js';
 import { registerEventRoutes } from './routes/events.js';
 import { registerHealthRoute } from './routes/health.js';
 import { registerIncidentRoutes } from './routes/incidents.js';
+import { registerPilotRoutes } from './routes/pilot.js';
 
 export interface AppDependencies {
   pool: pg.Pool;
@@ -95,7 +96,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       'x-outtrace-operator-key-id',
       'x-outtrace-operator-name',
     ],
-    methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'OPTIONS'],
     origin: options.corsOrigin ?? 'http://localhost:5173',
   });
   await app.register(rateLimit, {
@@ -106,6 +107,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   await app.register(registerEventRoutes);
   await app.register(registerIncidentRoutes);
   await app.register(registerAgencyRoutes);
+  await app.register(registerPilotRoutes);
 
   app.addHook('onClose', async () => {
     await Promise.allSettled([options.dependencies.pool.end(), options.dependencies.redis.close()]);

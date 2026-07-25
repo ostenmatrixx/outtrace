@@ -283,6 +283,9 @@ function OwnerControls({
                     void perform(async () => {
                       await updateProcess(apiBaseUrl, credentials, process.id, {
                         clientId: String(data.get('clientId') ?? process.clientId),
+                        lifecycleStatus: String(
+                          data.get('lifecycleStatus') ?? process.lifecycleStatus,
+                        ) as ProcessSummary['lifecycleStatus'],
                         metadataAllowlist: String(data.get('metadataAllowlist') ?? '')
                           .split(',')
                           .map((key) => key.trim())
@@ -300,6 +303,18 @@ function OwnerControls({
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label>
+                    Monitoring
+                    <select name="lifecycleStatus" defaultValue={process.lifecycleStatus}>
+                      <option value="active">Active</option>
+                      <option value="archived">Archived</option>
+                    </select>
+                    <small>
+                      {process.lifecycleStatus === 'active'
+                        ? 'Included in pilot readiness.'
+                        : 'Excluded from active pilot readiness.'}
+                    </small>
                   </label>
                   <label>
                     Allowed metadata keys
@@ -423,7 +438,7 @@ export function AgencyPanel({ apiBaseUrl, credentials }: AgencyPanelProps) {
     >
       <div className="incident-workspace__heading">
         <div>
-          <p className="section-index">AGENCY WORKSPACE 003</p>
+          <p className="section-index">AGENCY WORKSPACE 004</p>
           <h2 id="agency-title">Clients, access &amp; reporting</h2>
         </div>
         {session ? <span className="role-badge">{session.role}</span> : null}

@@ -41,9 +41,9 @@ function createFakePool(options: FakeClientOptions = {}): {
       if (normalized.includes('FROM processes')) {
         return { rowCount: 1, rows: [{ id: 'process_1' }] };
       }
-      if (normalized.includes('SELECT process_instance_id')) {
+      if (normalized.includes('SELECT events.process_instance_id')) {
         const rows = options.duplicateInstanceId
-          ? [{ process_instance_id: options.duplicateInstanceId }]
+          ? [{ process_id: 'process_1', process_instance_id: options.duplicateInstanceId }]
           : [];
         return { rowCount: rows.length, rows };
       }
@@ -57,6 +57,9 @@ function createFakePool(options: FakeClientOptions = {}): {
         return { rowCount: 1, rows: [{ id: 'event_1' }] };
       }
       if (normalized.startsWith('UPDATE process_instances')) {
+        return { rowCount: 1, rows: [] };
+      }
+      if (normalized.startsWith('UPDATE processes')) {
         return { rowCount: 1, rows: [] };
       }
 

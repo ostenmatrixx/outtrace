@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import type {
   IncidentDetail,
+  IncidentFeedback,
+  IncidentFeedbackUpdate,
   IncidentListResponse,
   IncidentNoteCreate,
   IncidentStatusUpdate,
@@ -9,6 +11,7 @@ import type {
 } from '@outtrace/contracts';
 import type pg from 'pg';
 
+import type { OperatorPrincipal } from './authentication.js';
 import { databaseFailure, HttpError } from './errors.js';
 
 interface IncidentRow extends pg.QueryResultRow {
@@ -53,6 +56,16 @@ interface NoteRow extends pg.QueryResultRow {
   author: string;
   body: string;
   created_at: Date;
+}
+
+interface FeedbackRow extends pg.QueryResultRow {
+  created_at: Date;
+  incident_id: string;
+  note: string | null;
+  reason: IncidentFeedback['reason'];
+  reviewed_by_name: string;
+  updated_at: Date;
+  verdict: IncidentFeedback['verdict'];
 }
 
 export interface IncidentFilters {
@@ -219,7 +232,7 @@ export async function getIncident(
 ): Promise<IncidentDetail> {
   try {
     const incident = await findIncident(pool, workspaceId, incidentId);
-    const [events, notes] = await Promise.all([
+    const [events, notes, feedback] = await Promise.all([
       pool.query<EventRow>(
         `
           SELECT
@@ -246,7 +259,23 @@ export async function getIncident(
         `,
         [workspaceId, incidentId],
       ),
+      pool.query<FeedbackRow>(
+        `
+          SELECT
+            incident_id,
+            verdict,
+            reason,
+            note,
+            reviewed_by_name,
+            created_at,
+            updated_at
+          FROM incident_feedback
+          WHERE workspace_id = $1 AND incident_id = $2
+        `,
+        [workspaceId, incidentId],
+      ),
     ]);
+    const incidentFeedback = feedback.rows[0];
 
     return {
       ...mapIncident(incident),
@@ -266,11 +295,99 @@ export async function getIncident(
         body: note.body,
         createdAt: note.created_at.toISOString(),
       })),
+      feedback: incidentFeedback
+        ? {
+            incidentId: incidentFeedback.incident_id,
+            verdict: incidentFeedback.verdict,
+            reason: incidentFeedback.reason,
+            note: incidentFeedback.note,
+            reviewedBy: incidentFeedback.reviewed_by_name,
+            createdAt: incidentFeedback.created_at.toISOString(),
+            updatedAt: incidentFeedback.updated_at.toISOString(),
+          }
+        : null,
     };
   } catch (error) {
     if (error instanceof HttpError) throw error;
     throw databaseFailure();
   }
+}
+
+export async function recordIncidentFeedback(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  incidentId: string,
+  feedback: IncidentFeedbackUpdate,
+): Promise<IncidentDetail> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await findIncident(client, principal.workspaceId, incidentId);
+    await client.query(
+      `
+        INSERT INTO incident_feedback (
+          id,
+          workspace_id,
+          incident_id,
+          verdict,
+          reason,
+          note,
+          reviewed_by_member_id,
+          reviewed_by_name
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (workspace_id, incident_id) DO UPDATE
+        SET
+          verdict = EXCLUDED.verdict,
+          reason = EXCLUDED.reason,
+          note = EXCLUDED.note,
+          reviewed_by_member_id = EXCLUDED.reviewed_by_member_id,
+          reviewed_by_name = EXCLUDED.reviewed_by_name,
+          updated_at = now()
+      `,
+      [
+        `feedback_${randomUUID()}`,
+        principal.workspaceId,
+        incidentId,
+        feedback.verdict,
+        feedback.reason ?? null,
+        feedback.note ?? null,
+        principal.memberId,
+        principal.name,
+      ],
+    );
+    await client.query(
+      `
+        INSERT INTO incident_audit_log (
+          id,
+          workspace_id,
+          incident_id,
+          action,
+          actor,
+          details
+        )
+        VALUES ($1, $2, $3, 'feedback_recorded', $4, $5::jsonb)
+      `,
+      [
+        `audit_${randomUUID()}`,
+        principal.workspaceId,
+        incidentId,
+        principal.name,
+        JSON.stringify({
+          verdict: feedback.verdict,
+          reason: feedback.reason ?? null,
+        }),
+      ],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    throw databaseFailure();
+  } finally {
+    client.release();
+  }
+  return getIncident(pool, principal.workspaceId, incidentId);
 }
 
 export async function updateIncident(

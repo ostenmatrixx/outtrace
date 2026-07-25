@@ -18,6 +18,12 @@ interface WorkspaceRow extends pg.QueryResultRow {
   operator_key_hash?: string;
 }
 
+interface ProcessCredentialRow extends pg.QueryResultRow {
+  key_hash: string;
+  process_id: string;
+  workspace_id: string;
+}
+
 interface MemberRow extends pg.QueryResultRow {
   id: string;
   workspace_id: string;
@@ -31,6 +37,11 @@ interface MemberRow extends pg.QueryResultRow {
 export interface IngestionCredentials {
   key: string;
   keyId: string;
+}
+
+export interface IngestionPrincipal {
+  processId: string | null;
+  workspaceId: string;
 }
 
 export interface OperatorCredentials {
@@ -71,8 +82,28 @@ export function readIngestionCredentials(request: FastifyRequest): IngestionCred
 export async function authenticateIngestion(
   pool: pg.Pool,
   credentials: IngestionCredentials,
-): Promise<string> {
+): Promise<IngestionPrincipal> {
   try {
+    const processCredentialResult = await pool.query<ProcessCredentialRow>(
+      `
+        SELECT workspace_id, process_id, key_hash
+        FROM process_ingestion_credentials
+        WHERE key_id = $1
+        LIMIT 1
+      `,
+      [credentials.keyId],
+    );
+    const processCredential = processCredentialResult.rows[0];
+    if (processCredential) {
+      if (!verifySha256Secret(credentials.key, processCredential.key_hash)) {
+        throw authenticationInvalid();
+      }
+      return {
+        processId: processCredential.process_id,
+        workspaceId: processCredential.workspace_id,
+      };
+    }
+
     const result = await pool.query<WorkspaceRow>(
       `
         SELECT id, ingestion_key_hash
@@ -88,7 +119,7 @@ export async function authenticateIngestion(
       throw authenticationInvalid();
     }
 
-    return workspace!.id;
+    return { processId: null, workspaceId: workspace!.id };
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
