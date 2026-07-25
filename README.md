@@ -1,15 +1,50 @@
-# Outtrace
+<p align="center">
+  <img src="docs/assets/outtrace-mark.svg" width="112" alt="Outtrace topology mark" />
+</p>
 
-[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![TypeScript 5.9](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+<h1 align="center">Outtrace</h1>
 
-Outtrace is an open-source, cross-platform business-process observability product for automation
-agencies. It turns workflow telemetry into an incident timeline that teams can operate across
-clients, tools, and environments.
+<p align="center">
+  <strong>Trace the process beyond the workflow.</strong><br />
+  Cross-platform business-process observability for automation agencies.
+</p>
+
+<p align="center">
+  <a href="package.json"><img alt="Version 0.1.0" src="https://img.shields.io/badge/version-v0.1.0-276a76?style=flat-square" /></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/ostenmatrixx/outtrace?style=flat-square&color=276a76" /></a>
+  <a href="https://github.com/ostenmatrixx/outtrace/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/ostenmatrixx/outtrace?style=flat-square&color=276a76" /></a>
+  <a href="https://github.com/ostenmatrixx/outtrace/issues"><img alt="Open issues" src="https://img.shields.io/github/issues/ostenmatrixx/outtrace?style=flat-square&color=a64242" /></a>
+</p>
+
+<p align="center">
+  <a href="https://nodejs.org/"><img alt="Node.js 22" src="https://img.shields.io/badge/Node.js-22-339933?style=flat-square&logo=nodedotjs&logoColor=white" /></a>
+  <a href="https://react.dev/"><img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=111827" /></a>
+  <a href="https://www.typescriptlang.org/"><img alt="TypeScript 5.9" src="https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript&logoColor=white" /></a>
+  <a href="https://vite.dev/"><img alt="Vite 8" src="https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white" /></a>
+  <a href="https://fastify.dev/"><img alt="Fastify 5" src="https://img.shields.io/badge/Fastify-5-111111?style=flat-square&logo=fastify&logoColor=white" /></a>
+  <a href="https://zod.dev/"><img alt="Zod 4" src="https://img.shields.io/badge/Zod-4-3E67B1?style=flat-square&logo=zod&logoColor=white" /></a>
+</p>
+
+<p align="center">
+  <a href="https://www.postgresql.org/"><img alt="PostgreSQL 17" src="https://img.shields.io/badge/PostgreSQL-17-4169E1?style=flat-square&logo=postgresql&logoColor=white" /></a>
+  <a href="https://redis.io/"><img alt="Redis 7.4" src="https://img.shields.io/badge/Redis-7.4-DC382D?style=flat-square&logo=redis&logoColor=white" /></a>
+  <a href="https://docs.bullmq.io/"><img alt="BullMQ 5" src="https://img.shields.io/badge/BullMQ-5-B91C1C?style=flat-square" /></a>
+  <a href="https://vitest.dev/"><img alt="Vitest 4" src="https://img.shields.io/badge/Vitest-4-6E9F18?style=flat-square&logo=vitest&logoColor=white" /></a>
+  <a href="https://docs.docker.com/compose/"><img alt="Docker Compose" src="https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker&logoColor=white" /></a>
+</p>
+
+<p align="center">
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#production-engineering">Production engineering</a> ·
+  <a href="#tech-stack">Tech stack</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#local-development">Local development</a>
+</p>
 
 ## What it does
+
+Outtrace turns workflow telemetry into an incident timeline that teams can operate across clients,
+tools, and environments.
 
 - Connects n8n, Make, and custom services through one authenticated event contract.
 - Correlates stage events into a client, process, instance, and source-execution timeline.
@@ -47,20 +82,70 @@ clients, tools, and environments.
 
 ## Architecture
 
-Outtrace separates synchronous ingestion from asynchronous incident evaluation:
+Outtrace separates synchronous ingestion from asynchronous incident evaluation. PostgreSQL remains
+the system of record; Redis carries retryable BullMQ work, while the API remains the tenant and
+client security boundary.
 
-```text
-n8n / Make / custom service
-  → owner-created sandbox or production process with ordered stages
-  → one-time process-scoped ingestion credential
-  → authenticated POST /v1/events
-  → validation and metadata minimization
-  → transactional PostgreSQL event + evaluation outbox
-  → retryable BullMQ incident evaluation
-  → failure / missing-stage / SLA / sequence detection
-  → authenticated incident inbox + optional Slack alert
-  → genuine / false-positive operator feedback
-  → fixed rolling 28-day pilot summary
+```mermaid
+flowchart LR
+  subgraph SOURCES["Automation runtimes"]
+    direction TB
+    N8N["n8n workflow"]
+    MAKE["Make scenario"]
+    CUSTOM["Custom service"]
+  end
+
+  subgraph PLATFORM["Outtrace platform"]
+    direction TB
+
+    subgraph API["Fastify API"]
+      direction LR
+      AUTH["Process-scoped authentication"]
+      CONTRACT["Zod validation<br/>metadata minimization"]
+      INGEST["Idempotent event ingestion"]
+      OPS["Tenant-scoped operations API"]
+      AUTH --> CONTRACT --> INGEST
+    end
+
+    subgraph DATA["Transactional state"]
+      direction LR
+      PG[("PostgreSQL 17")]
+      EVAL_OUTBOX["Evaluation outbox"]
+      NOTIFY_OUTBOX["Notification outbox"]
+    end
+
+    subgraph ASYNC["BullMQ worker"]
+      direction LR
+      PUBLISH["Outbox publisher"]
+      QUEUE[("Redis 7.4<br/>BullMQ")]
+      ENGINE["Incident engine"]
+      SWEEP["Deadline sweeper"]
+      DELIVERY["Slack delivery"]
+      PUBLISH --> QUEUE --> ENGINE
+      SWEEP --> ENGINE
+    end
+
+    subgraph EXPERIENCE["Operator experience"]
+      direction LR
+      DASH["React dashboard"]
+      INBOX["Incident inbox<br/>cross-platform timeline"]
+      PILOT["28-day pilot summary"]
+      DASH --> INBOX
+      DASH --> PILOT
+    end
+  end
+
+  SLACK["Slack channel"]
+
+  N8N -->|"POST /v1/events"| AUTH
+  MAKE --> AUTH
+  CUSTOM --> AUTH
+  INGEST -->|"event + outbox<br/>one transaction"| PG
+  PG --> EVAL_OUTBOX --> PUBLISH
+  ENGINE -->|"incident lifecycle + audit"| PG
+  ENGINE --> NOTIFY_OUTBOX --> DELIVERY --> SLACK
+  DASH -->|"session, process, incident, pilot APIs"| OPS
+  OPS --> PG
 ```
 
 The API authenticates and validates each event, minimizes metadata, and commits the event plus an
