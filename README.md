@@ -6,8 +6,48 @@
 [![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
 Outtrace is an open-source, cross-platform business-process observability product for automation
-agencies. Phase 4 adds a controlled production-pilot loop to the existing agency-safe incident
-workflow:
+agencies. It turns workflow telemetry into an incident timeline that teams can operate across
+clients, tools, and environments.
+
+## What it does
+
+- Connects n8n, Make, and custom services through one authenticated event contract.
+- Correlates stage events into a client, process, instance, and source-execution timeline.
+- Detects reported failures, missing stages, unexpected sequences, and SLA violations.
+- Gives owners and operators an incident inbox with assignment, notes, lifecycle controls, Slack
+  alerts, and genuine or false-positive feedback.
+- Provides client isolation, role-based access, configurable metadata policies, retention, and a
+  fixed 28-day production-pilot summary.
+
+## Production engineering
+
+- Strict Zod contracts reject invalid input while recursive metadata minimization removes sensitive,
+  unknown, nested, and oversized values before persistence.
+- Process-scoped ingestion credentials reduce blast radius. Only credential hashes are stored, and
+  authentication uses constant-time secret comparison.
+- PostgreSQL constraints make event ingestion idempotent, while event persistence and evaluation
+  outbox writes share one transaction.
+- Stable BullMQ job IDs, retry policies, bounded backoff, and deadline sweeps make asynchronous
+  incident evaluation resilient to duplicate delivery and service restarts.
+- Tenant and client access are enforced by the API on every operational route; the browser is never
+  treated as the security boundary.
+- Health checks expose PostgreSQL and Redis state, and the verification suite covers formatting,
+  linting, type safety, unit tests, isolated-schema integration tests, and production builds.
+
+## Tech stack
+
+| Layer             | Technology                                         |
+| ----------------- | -------------------------------------------------- |
+| Dashboard         | React 19, TypeScript 5.9, Vite 8, GSAP             |
+| API               | Node.js 22, Fastify 5, Zod 4                       |
+| Background worker | BullMQ 5, Redis 7.4                                |
+| Persistence       | PostgreSQL 17, node-postgres                       |
+| Testing           | Vitest 4, Testing Library                          |
+| Workspace/tooling | npm workspaces, Docker Compose, ESLint 9, Prettier |
+
+## Architecture
+
+Outtrace separates synchronous ingestion from asynchronous incident evaluation:
 
 ```text
 n8n / Make / custom service
@@ -23,19 +63,21 @@ n8n / Make / custom service
   → fixed rolling 28-day pilot summary
 ```
 
-Incidents are correlated to the affected client, process, instance, stage, source execution, and
-cross-platform event timeline. Owners administer clients, members, process data policies, and
-retention and create pilot process definitions. Owners and operators manage incidents, classify
-their quality, and review pilot evidence. Viewers receive read-only access to only their assigned
-clients.
+The API authenticates and validates each event, minimizes metadata, and commits the event plus an
+evaluation-outbox row to PostgreSQL. The worker publishes those rows to BullMQ, evaluates incident
+conditions idempotently, and records notification work for optional Slack delivery. The dashboard
+reads the same tenant-scoped API for incident operations, agency administration, and pilot evidence.
+Detailed tradeoffs are documented in the [architecture decision records](docs/architecture/).
 
-## Requirements
+## Local Development
+
+### Requirements
 
 - Node.js 22 or newer
 - npm 10 or newer
 - Docker with Docker Compose
 
-## Quick start
+### Quick start
 
 1. Create the local environment file and install dependencies.
 
