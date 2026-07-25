@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title description">
+  <title id="title">Outtrace topology mark</title>
+  <desc id="description">Three event sources converge into one process trace and incident.</desc>
+  <rect x="4" y="4" width="120" height="120" rx="24" fill="#0c1114"/>
+  <rect x="5" y="5" width="118" height="118" rx="23" fill="none" stroke="#303a40" stroke-width="2"/>
+  <g fill="none" stroke="#9eabb2" stroke-linecap="round" stroke-width="3">
+    <path d="M29 34h12c10 0 12 17 23 24"/>
+    <path d="M29 64h19"/>
+    <path d="M29 94h12c10 0 12-17 23-24"/>
+    <path d="M78 64h16"/>
+  </g>
+  <g fill="#f2f5f6">
+    <circle cx="25" cy="34" r="5"/>
+    <circle cx="25" cy="64" r="5"/>
+    <circle cx="25" cy="94" r="5"/>
+  </g>
+  <circle cx="66" cy="64" r="15" fill="#276a76"/>
+  <path d="M59 64h14M66 57v14" stroke="#f2f5f6" stroke-linecap="round" stroke-width="3"/>
+  <rect x="94" y="49" width="22" height="30" rx="5" fill="#f2f5f6"/>
+  <path d="M100 58h10M100 64h7" stroke="#637079" stroke-linecap="round" stroke-width="2.5"/>
+  <circle cx="109" cy="72" r="3.5" fill="#a64242"/>
+</svg>
