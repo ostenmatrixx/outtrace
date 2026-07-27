@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:22-alpine AS dependencies
+FROM node:26-alpine AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/api/package.json
@@ -18,7 +18,7 @@ COPY packages packages
 COPY database database
 RUN npm run build
 
-FROM node:22-alpine AS production-dependencies
+FROM node:26-alpine AS production-dependencies
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json ./
@@ -28,7 +28,7 @@ COPY apps/worker/package.json apps/worker/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:22-alpine AS api
+FROM node:26-alpine AS api
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=production-dependencies --chown=node:node /app/node_modules node_modules
@@ -41,7 +41,7 @@ USER node
 EXPOSE 3000
 CMD ["node", "apps/api/dist/server.js"]
 
-FROM node:22-alpine AS worker
+FROM node:26-alpine AS worker
 WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=production-dependencies --chown=node:node /app/node_modules node_modules
