@@ -383,40 +383,40 @@ and updates the seeded credential hash.
 keys, and database passwords are secrets. Variables prefixed with `VITE_` are compiled into browser
 code and must never contain credentials.
 
-| Variable                                            | Consumer          | Required/default                 | Notes                                             |
-| --------------------------------------------------- | ----------------- | -------------------------------- | ------------------------------------------------- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Compose           | Local defaults in `.env.example` | PostgreSQL container bootstrap                    |
-| `POSTGRES_PORT`                                     | Compose           | `5432`                           | Loopback-only host port                           |
-| `DATABASE_URL`, `DATABASE_URL_FILE`                 | API/worker        | One required                     | Direct local URL or mounted secret file           |
-| `TEST_DATABASE_URL`                                 | Integration tests | Required by integration/verify   | Must permit temporary schemas                     |
-| `REDIS_PORT`                                        | Compose           | `6379`                           | Loopback-only host port                           |
-| `REDIS_URL`, `REDIS_URL_FILE`                       | API/worker        | One required                     | Direct local URL or mounted secret file           |
-| `NODE_ENV`                                          | API/migrations    | `development`                    | Development seeding is rejected in `production`   |
-| `API_HOST`, `API_PORT`                              | API               | `127.0.0.1`, `3000`              | Listen address and port                           |
-| `API_CORS_ORIGIN`                                   | API               | `http://localhost:5173`          | Must exactly match the dashboard origin           |
-| `API_TRUST_PROXY`                                   | API               | `false`                          | Enable only behind the trusted production ingress |
-| `LOG_LEVEL`                                         | API               | `info`                           | Fastify log level                                 |
-| `OUTTRACE_SEED_DEVELOPMENT`                         | Migrations        | `false` in code                  | Enables the local-only seed                       |
-| `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`         | Seed              | Required when seed enabled       | Public example values are local-only              |
-| `DEV_OPERATOR_KEY_ID`, `DEV_OPERATOR_KEY`           | Seed/dashboard    | Required when seed enabled       | Hashed operator credential for incident APIs      |
-| `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                 | Seed              | Required when seed enabled       | Stable local identifiers                          |
-| `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                 | Seed              | Required when seed enabled       | Stable local process                              |
-| `WORKER_CONCURRENCY`                                | Worker            | `5`, range 1–100                 | Parallel BullMQ jobs                              |
-| `WORKER_LOCK_DURATION_MS`                           | Worker            | `30000`, range 5000–600000       | BullMQ lock duration                              |
-| `WORKER_SHUTDOWN_TIMEOUT_MS`                        | Worker            | `30000`, range 100–120000        | Total shutdown deadline                           |
-| `REDIS_CONNECT_TIMEOUT_MS`                          | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                  |
-| `PHASE_2_POLL_INTERVAL_MS`                          | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval      |
-| `PHASE_2_SWEEP_INTERVAL_MS`                         | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval              |
-| `RETENTION_SWEEP_INTERVAL_MS`                       | Worker            | `3600000`, range 60000–86400000  | Expired event cleanup interval                    |
-| `RETENTION_BATCH_SIZE`                              | Worker            | `1000`, range 100–10000          | Maximum events deleted per statement              |
-| `RETENTION_MAX_BATCHES_PER_SWEEP`                   | Worker            | `10`, range 1–100                | Per-workspace cleanup work bound                  |
-| `IDEMPOTENCY_RETENTION_DAYS`                        | Worker            | `365`, range 30–3650             | Retry-receipt retention after raw event deletion  |
-| `OUTBOX_RETENTION_DAYS`                             | Worker            | `90`, range 7–3650               | Completed outbox record retention                 |
-| `SLACK_WEBHOOK_URLS_JSON`, `_FILE`                  | Worker            | Empty mapping                    | Workspace-to-HTTPS-webhook secret mapping         |
-| `SLACK_MINIMUM_SEVERITY`                            | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`            |
-| `DASHBOARD_BASE_URL`                                | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links         |
-| `WORKER_HEALTH_HOST`, `WORKER_HEALTH_PORT`          | Worker            | `127.0.0.1`, `3001`              | Worker liveness/readiness listener                |
-| `VITE_API_BASE_URL`                                 | Dashboard         | `http://localhost:3000`          | Public browser-visible API origin                 |
+| Variable                                                  | Consumer          | Required/default                 | Notes                                             |
+| --------------------------------------------------------- | ----------------- | -------------------------------- | ------------------------------------------------- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`       | Compose           | Local defaults in `.env.example` | PostgreSQL container bootstrap                    |
+| `POSTGRES_PORT`                                           | Compose           | `5432`                           | Loopback-only host port                           |
+| `DATABASE_URL`, `DATABASE_URL_FILE`                       | API/worker        | One required                     | Direct local URL or mounted secret file           |
+| `TEST_DATABASE_URL`                                       | Integration tests | Required by integration/verify   | Must permit temporary schemas                     |
+| `REDIS_PORT`                                              | Compose           | `6379`                           | Loopback-only host port                           |
+| `REDIS_URL`, `REDIS_URL_FILE`                             | API/worker        | One required                     | Direct local URL or mounted secret file           |
+| `NODE_ENV`                                                | API/migrations    | `development`                    | Development seeding is rejected in `production`   |
+| `API_HOST`, `API_PORT`                                    | API               | `127.0.0.1`, `3000`              | Listen address and port                           |
+| `API_CORS_ORIGIN`                                         | API               | `http://localhost:5173`          | Must exactly match the dashboard origin           |
+| `API_TRUST_PROXY`                                         | API               | `false`                          | Enable only behind the trusted production ingress |
+| `LOG_LEVEL`                                               | API               | `info`                           | Fastify log level                                 |
+| `OUTTRACE_SEED_DEVELOPMENT`                               | Migrations        | `false` in code                  | Enables the local-only seed                       |
+| `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`               | Seed              | Required when seed enabled       | Public example values are local-only              |
+| `DEV_OPERATOR_KEY_ID`, `DEV_OPERATOR_KEY`                 | Seed/dashboard    | Required when seed enabled       | Hashed operator credential for incident APIs      |
+| `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                       | Seed              | Required when seed enabled       | Stable local identifiers                          |
+| `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                       | Seed              | Required when seed enabled       | Stable local process                              |
+| `WORKER_CONCURRENCY`                                      | Worker            | `5`, range 1–100                 | Parallel BullMQ jobs                              |
+| `WORKER_LOCK_DURATION_MS`                                 | Worker            | `30000`, range 5000–600000       | BullMQ lock duration                              |
+| `WORKER_SHUTDOWN_TIMEOUT_MS`                              | Worker            | `30000`, range 100–120000        | Total shutdown deadline                           |
+| `REDIS_CONNECT_TIMEOUT_MS`                                | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                  |
+| `PHASE_2_POLL_INTERVAL_MS`                                | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval      |
+| `PHASE_2_SWEEP_INTERVAL_MS`                               | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval              |
+| `RETENTION_SWEEP_INTERVAL_MS`                             | Worker            | `3600000`, range 60000–86400000  | Expired event cleanup interval                    |
+| `RETENTION_BATCH_SIZE`                                    | Worker            | `1000`, range 100–10000          | Maximum events deleted per statement              |
+| `RETENTION_MAX_BATCHES_PER_SWEEP`                         | Worker            | `10`, range 1–100                | Per-workspace cleanup work bound                  |
+| `IDEMPOTENCY_RETENTION_DAYS`                              | Worker            | `365`, range 30–3650             | Retry-receipt retention after raw event deletion  |
+| `OUTBOX_RETENTION_DAYS`                                   | Worker            | `90`, range 7–3650               | Completed outbox record retention                 |
+| `SLACK_WEBHOOK_URLS_JSON`, `SLACK_WEBHOOK_URLS_JSON_FILE` | Worker            | Empty mapping                    | Workspace-to-HTTPS-webhook secret mapping         |
+| `SLACK_MINIMUM_SEVERITY`                                  | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`            |
+| `DASHBOARD_BASE_URL`                                      | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links         |
+| `WORKER_HEALTH_HOST`, `WORKER_HEALTH_PORT`                | Worker            | `127.0.0.1`, `3001`              | Worker liveness/readiness listener                |
+| `VITE_API_BASE_URL`                                       | Dashboard         | `http://localhost:3000`          | Public browser-visible API origin                 |
 
 ## Repository layout
 

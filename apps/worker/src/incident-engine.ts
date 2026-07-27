@@ -71,6 +71,14 @@ export interface IncidentEvaluationResult {
 
 const candidateKey = (type: IncidentType, stage: string | null): string => `${type}:${stage ?? ''}`;
 
+function arrivedBefore(left: EventRow, right: EventRow): boolean {
+  return (
+    left.received_at < right.received_at ||
+    (left.received_at.getTime() === right.received_at.getTime() &&
+      left.external_event_id < right.external_event_id)
+  );
+}
+
 function latestEventsByStage(events: EventRow[]): Map<string, EventRow> {
   const latest = new Map<string, EventRow>();
   for (const event of events) {
@@ -142,6 +150,15 @@ function buildCandidates(
   const requiredStages = stages
     .filter((stage) => stage.required)
     .sort((a, b) => a.position - b.position);
+  // Arrival-order incidents use received_at; stage state and completion use occurred_at.
+  const earliestCompletedArrivalByStage = new Map<string, EventRow>();
+  for (const event of events) {
+    if (event.status !== 'completed') continue;
+    const current = earliestCompletedArrivalByStage.get(event.stage);
+    if (!current || arrivedBefore(event, current)) {
+      earliestCompletedArrivalByStage.set(event.stage, event);
+    }
+  }
 
   for (const [stageKey, event] of latestByStage) {
     if (event.status !== 'failed') continue;
@@ -164,17 +181,10 @@ function buildCandidates(
     const stage = stageByKey.get(event.stage);
     if (!stage) continue;
     const predecessors = requiredStages.filter((required) => required.position < stage.position);
-    const missingAtOccurrence = predecessors.filter(
-      (required) =>
-        !events.some(
-          (candidate) =>
-            candidate.stage === required.key &&
-            candidate.status === 'completed' &&
-            (candidate.received_at < event.received_at ||
-              (candidate.received_at.getTime() === event.received_at.getTime() &&
-                candidate.external_event_id < event.external_event_id)),
-        ),
-    );
+    const missingAtOccurrence = predecessors.filter((required) => {
+      const completion = earliestCompletedArrivalByStage.get(required.key);
+      return !completion || !arrivedBefore(completion, event);
+    });
     if (missingAtOccurrence.length === 0) continue;
     const missingNames = missingAtOccurrence.map((required) => required.name).join(', ');
     const candidate: Candidate = {
@@ -192,7 +202,8 @@ function buildCandidates(
     const key = candidateKey(candidate.type, candidate.stage);
     if (missingAtOccurrence.some((required) => !completedAt.has(required.key))) {
       if (!candidates.has(key)) candidates.set(key, candidate);
-    } else if (!clearedSequence.has(key)) {
+      clearedSequence.delete(key);
+    } else if (!candidates.has(key) && !clearedSequence.has(key)) {
       clearedSequence.set(key, candidate);
     }
   }
@@ -389,7 +400,7 @@ export async function evaluateProcessInstance(
     );
 
     for (const [key, candidate] of candidateSet.clearedSequence) {
-      if (existing.has(key)) continue;
+      if (existing.has(key) || candidates.has(key)) continue;
       const incidentId = `incident_${randomUUID()}`;
       await client.query(
         `
@@ -425,6 +436,15 @@ export async function evaluateProcessInstance(
       );
       await addAudit(client, workspaceId, incidentId, 'created');
       await addAudit(client, workspaceId, incidentId, 'resolved');
+      existing.set(key, {
+        id: incidentId,
+        incident_type: candidate.type,
+        affected_stage: candidate.stage,
+        status: 'resolved',
+        resolution_reason: 'condition_cleared',
+        notification_version: 1,
+        resolved_at: now,
+      });
       created += 1;
       resolved += 1;
     }

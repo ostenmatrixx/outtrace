@@ -108,6 +108,9 @@ function parseSlackWebhookUrls(environment: NodeJS.ProcessEnv): Readonly<Record<
       'SLACK_WEBHOOK_URLS_JSON and SLACK_WEBHOOK_URL cannot both be configured',
     );
   }
+  if (legacyWebhook && environment.NODE_ENV === 'production') {
+    throw new WorkerConfigError('The legacy SLACK_WEBHOOK_URL is disabled in production');
+  }
 
   let input: unknown = {};
   if (raw) {

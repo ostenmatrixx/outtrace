@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { ConfigurationError, loadConfig } from './config.js';
@@ -112,11 +116,15 @@ describe('loadConfig', () => {
           REDIS_URL: 'redis://localhost:6379',
         }),
       ).toThrow('DATABASE_URL and DATABASE_URL_FILE cannot both be set');
+      writeFileSync(databaseFile, '\n');
+      expect(() =>
+        loadConfig({
+          DATABASE_URL_FILE: databaseFile,
+          REDIS_URL: 'redis://localhost:6379',
+        }),
+      ).toThrow('DATABASE_URL_FILE is empty');
     } finally {
       rmSync(directory, { recursive: true });
     }
   });
 });
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';

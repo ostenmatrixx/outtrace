@@ -141,10 +141,18 @@ export async function runWorkspaceBootstrap(environment: NodeJS.ProcessEnv = pro
 
 const entrypoint = process.argv[1];
 if (entrypoint && import.meta.url === pathToFileURL(entrypoint).href) {
-  runWorkspaceBootstrap().catch(() => {
+  runWorkspaceBootstrap().catch((error: unknown) => {
     process.stderr.write(
       'Workspace bootstrap failed. Check the bootstrap fields, database connectivity, and whether the workspace ID already exists.\n',
     );
+    if (error instanceof z.ZodError) {
+      process.stderr.write(`${z.prettifyError(error)}\n`);
+    } else if (
+      error instanceof Error &&
+      error.message === 'The workspace bootstrap target already exists.'
+    ) {
+      process.stderr.write(`${error.message}\n`);
+    }
     process.exitCode = 1;
   });
 }

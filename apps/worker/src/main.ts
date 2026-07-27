@@ -11,7 +11,11 @@ async function start(): Promise<void> {
   try {
     await startWorkerHealthServer(application, config, logger);
   } catch (error) {
-    await application.shutdown('health_server_start_failed');
+    try {
+      await application.shutdown('health_server_start_failed');
+    } catch (shutdownError) {
+      logger.error('worker_shutdown_failed', safeError(shutdownError));
+    }
     throw error;
   }
 }

@@ -60,6 +60,12 @@ const severityRank: Record<IncidentSeverity, number> = {
   medium: 2,
   low: 1,
 };
+const NOTIFICATION_CLAIM_BATCH_SIZE = 8;
+const NOTIFICATION_CLAIM_LEASE_SECONDS = 120;
+const SLACK_REQUEST_TIMEOUT_MS = 10_000;
+
+const escapeSlackText = (value: string): string =>
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 
 export async function dispatchEvaluationOutbox(
   pool: pg.Pool,
@@ -212,13 +218,14 @@ export async function deliverSlackNotifications(
           AND incident_notification_outbox.workspace_id = ANY($1::text[])
           AND (
             incident_notification_outbox.claimed_at IS NULL
-            OR incident_notification_outbox.claimed_at < now() - interval '2 minutes'
+            OR incident_notification_outbox.claimed_at
+              < now() - ($2::int * interval '1 second')
           )
         ORDER BY incident_notification_outbox.created_at
         FOR UPDATE OF incident_notification_outbox SKIP LOCKED
-        LIMIT 50
+        LIMIT $3
       `,
-      [workspaceIds],
+      [workspaceIds, NOTIFICATION_CLAIM_LEASE_SECONDS, NOTIFICATION_CLAIM_BATCH_SIZE],
     );
     if (result.rows.length > 0) {
       await claimClient.query(
@@ -272,8 +279,6 @@ export async function deliverSlackNotifications(
       continue;
     }
 
-    const escapeSlackText = (value: string): string =>
-      value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
     const text = [
       `*${escapeSlackText(notification.process_name)} incident*`,
       escapeSlackText(notification.business_message),
@@ -285,16 +290,27 @@ export async function deliverSlackNotifications(
       .join('\n');
 
     try {
+      const renewed = await pool.query(
+        `
+          UPDATE incident_notification_outbox
+          SET claimed_at = now()
+          WHERE id = $1 AND sent_at IS NULL AND claim_token = $2
+          RETURNING id
+        `,
+        [notification.id, claimToken],
+      );
+      if (renewed.rowCount !== 1) continue;
+
       const response = await fetcher(config.slackWebhookUrls[notification.workspace_id]!, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text }),
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(SLACK_REQUEST_TIMEOUT_MS),
       });
       if (!response.ok) {
         throw new Error(`Slack returned HTTP ${response.status}`);
       }
-      await pool.query(
+      const marked = await pool.query(
         `
           UPDATE incident_notification_outbox
           SET
@@ -307,7 +323,7 @@ export async function deliverSlackNotifications(
         `,
         [notification.id, claimToken],
       );
-      sent += 1;
+      if (marked.rowCount === 1) sent += 1;
     } catch (error) {
       await pool.query(
         `
@@ -456,56 +472,44 @@ export async function enforceOutboxRetention(
   now = new Date(),
   retentionDays = 90,
   batchSize = 1_000,
+  maxBatches = 10,
 ): Promise<number> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const evaluation = await client.query<{ count: number }>(
-      `
-        WITH candidates AS (
-          SELECT ctid
-          FROM event_evaluation_outbox
-          WHERE
-            published_at IS NOT NULL
-            AND created_at < $1::timestamptz - ($2::int * interval '1 day')
-          ORDER BY created_at, id
-          FOR UPDATE SKIP LOCKED
-          LIMIT $3
-        ),
-        removed AS (
-          DELETE FROM event_evaluation_outbox
-          USING candidates
-          WHERE event_evaluation_outbox.ctid = candidates.ctid
-          RETURNING 1
-        )
-        SELECT count(*)::int AS count FROM removed
-      `,
-      [now, retentionDays, batchSize],
-    );
-    const notifications = await client.query<{ count: number }>(
-      `
-        WITH candidates AS (
-          SELECT ctid
-          FROM incident_notification_outbox
-          WHERE
-            sent_at IS NOT NULL
-            AND created_at < $1::timestamptz - ($2::int * interval '1 day')
-          ORDER BY created_at, id
-          FOR UPDATE SKIP LOCKED
-          LIMIT $3
-        ),
-        removed AS (
-          DELETE FROM incident_notification_outbox
-          USING candidates
-          WHERE incident_notification_outbox.ctid = candidates.ctid
-          RETURNING 1
-        )
-        SELECT count(*)::int AS count FROM removed
-      `,
-      [now, retentionDays, batchSize],
-    );
+    let totalDeleted = 0;
+    for (const table of ['event_evaluation_outbox', 'incident_notification_outbox'] as const) {
+      const completionColumn = table === 'event_evaluation_outbox' ? 'published_at' : 'sent_at';
+      for (let batch = 0; batch < maxBatches; batch += 1) {
+        const result = await client.query<{ count: number }>(
+          `
+            WITH candidates AS (
+              SELECT ctid
+              FROM ${table}
+              WHERE
+                ${completionColumn} IS NOT NULL
+                AND created_at < $1::timestamptz - ($2::int * interval '1 day')
+              ORDER BY created_at, id
+              FOR UPDATE SKIP LOCKED
+              LIMIT $3
+            ),
+            removed AS (
+              DELETE FROM ${table}
+              USING candidates
+              WHERE ${table}.ctid = candidates.ctid
+              RETURNING 1
+            )
+            SELECT count(*)::int AS count FROM removed
+          `,
+          [now, retentionDays, batchSize],
+        );
+        const deleted = result.rows[0]?.count ?? 0;
+        totalDeleted += deleted;
+        if (deleted < batchSize) break;
+      }
+    }
     await client.query('COMMIT');
-    return (evaluation.rows[0]?.count ?? 0) + (notifications.rows[0]?.count ?? 0);
+    return totalDeleted;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw error;
@@ -519,48 +523,55 @@ export async function enforceIdempotencyRetention(
   now = new Date(),
   retentionDays = 365,
   batchSize = 1_000,
+  maxBatches = 10,
 ): Promise<number> {
-  const result = await pool.query<{ count: number }>(
-    `
-      WITH candidates AS (
-        SELECT event_idempotency_keys.ctid
-        FROM event_idempotency_keys
-        WHERE
-          event_idempotency_keys.created_at
-            < $1::timestamptz - ($2::int * interval '1 day')
-          AND NOT EXISTS (
-            SELECT 1
-            FROM events
-            WHERE
-              events.workspace_id = event_idempotency_keys.workspace_id
-              AND events.external_event_id = event_idempotency_keys.external_event_id
-          )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM event_evaluation_outbox
-            WHERE
-              event_evaluation_outbox.workspace_id = event_idempotency_keys.workspace_id
-              AND event_evaluation_outbox.external_event_id
-                = event_idempotency_keys.external_event_id
-          )
-        ORDER BY
-          event_idempotency_keys.created_at,
-          event_idempotency_keys.workspace_id,
-          event_idempotency_keys.external_event_id
-        FOR UPDATE SKIP LOCKED
-        LIMIT $3
-      ),
-      removed AS (
-        DELETE FROM event_idempotency_keys
-        USING candidates
-        WHERE event_idempotency_keys.ctid = candidates.ctid
-        RETURNING 1
-      )
-      SELECT count(*)::int AS count FROM removed
-    `,
-    [now, retentionDays, batchSize],
-  );
-  return result.rows[0]?.count ?? 0;
+  let totalDeleted = 0;
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const result = await pool.query<{ count: number }>(
+      `
+        WITH candidates AS (
+          SELECT event_idempotency_keys.ctid
+          FROM event_idempotency_keys
+          WHERE
+            event_idempotency_keys.created_at
+              < $1::timestamptz - ($2::int * interval '1 day')
+            AND NOT EXISTS (
+              SELECT 1
+              FROM events
+              WHERE
+                events.workspace_id = event_idempotency_keys.workspace_id
+                AND events.external_event_id = event_idempotency_keys.external_event_id
+            )
+            AND NOT EXISTS (
+              SELECT 1
+              FROM event_evaluation_outbox
+              WHERE
+                event_evaluation_outbox.workspace_id = event_idempotency_keys.workspace_id
+                AND event_evaluation_outbox.external_event_id
+                  = event_idempotency_keys.external_event_id
+            )
+          ORDER BY
+            event_idempotency_keys.created_at,
+            event_idempotency_keys.workspace_id,
+            event_idempotency_keys.external_event_id
+          FOR UPDATE SKIP LOCKED
+          LIMIT $3
+        ),
+        removed AS (
+          DELETE FROM event_idempotency_keys
+          USING candidates
+          WHERE event_idempotency_keys.ctid = candidates.ctid
+          RETURNING 1
+        )
+        SELECT count(*)::int AS count FROM removed
+      `,
+      [now, retentionDays, batchSize],
+    );
+    const deleted = result.rows[0]?.count ?? 0;
+    totalDeleted += deleted;
+    if (deleted < batchSize) break;
+  }
+  return totalDeleted;
 }
 
 export function createPhase2Runtime(
@@ -609,12 +620,14 @@ export function createPhase2Runtime(
           new Date(),
           config.outboxRetentionDays,
           config.retentionBatchSize,
+          config.retentionMaxBatchesPerSweep,
         );
         idempotencyPruned = await enforceIdempotencyRetention(
           pool,
           new Date(),
           config.idempotencyRetentionDays,
           config.retentionBatchSize,
+          config.retentionMaxBatchesPerSweep,
         );
       }
       if (

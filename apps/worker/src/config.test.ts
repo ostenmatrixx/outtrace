@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { loadWorkerConfig, WorkerConfigError } from './config.js';
@@ -154,6 +158,16 @@ describe('loadWorkerConfig', () => {
         NODE_ENV: 'production',
       }),
     ).toThrow('sslmode=verify-full');
+    expect(() =>
+      loadWorkerConfig({
+        DATABASE_URL: 'postgres://db.example.com/outtrace?sslmode=verify-full',
+        REDIS_URL: 'rediss://redis.example.com:6380',
+        DASHBOARD_BASE_URL: 'https://app.example.com',
+        NODE_ENV: 'production',
+        SLACK_SINGLE_WORKSPACE_ID: 'ws_one',
+        SLACK_WEBHOOK_URL: 'https://hooks.slack.test/services/legacy',
+      }),
+    ).toThrow('legacy SLACK_WEBHOOK_URL is disabled in production');
     expect(
       loadWorkerConfig({
         DATABASE_URL: 'postgres://db.example.com/outtrace?sslmode=verify-full',
@@ -167,6 +181,3 @@ describe('loadWorkerConfig', () => {
     });
   });
 });
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';

@@ -63,6 +63,11 @@ docker compose -f docker-compose.production.yml up -d
 The one-shot `migrate` service must complete successfully before the API or worker starts. Migration
 files are immutable and applied under a PostgreSQL advisory lock.
 
+Migration `006_production_hardening.sql` backfills event-ID receipts and builds indexes
+transactionally. Rehearse it against a current staging clone, record its lock duration, and schedule
+the production upgrade in a maintenance window. Pause ingress if the rehearsal shows unacceptable
+write blocking for the production data volume.
+
 Validate:
 
 ```bash
@@ -169,7 +174,9 @@ pruned while its raw event or evaluation outbox row still exists.
 For PostgreSQL logical backup tooling, use a restricted backup identity:
 
 ```bash
-pg_dump --format=custom --no-owner --file=outtrace.dump "${DATABASE_URL}"
+set -eu
+pg_dump --format=custom --no-owner --file=outtrace.dump \
+  "$(tr -d '\r\n' < "${OUTTRACE_DATABASE_URL_FILE}")"
 pg_restore --clean --if-exists --no-owner --dbname="${RESTORE_DATABASE_URL}" outtrace.dump
 ```
 

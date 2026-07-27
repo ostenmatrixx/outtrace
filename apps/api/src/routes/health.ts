@@ -41,12 +41,12 @@ export async function registerHealthRoute(app: FastifyInstance): Promise<void> {
     };
   };
 
-  app.get('/live', async () => ({
+  app.get('/live', { config: { rateLimit: false } }, async () => ({
     service: 'outtrace-api',
     status: 'ok',
   }));
 
-  app.get('/ready', async (_request, reply) => {
+  app.get('/ready', { config: { rateLimit: false } }, async (_request, reply) => {
     const response = await health();
     return reply.code(response.status === 'ok' ? 200 : 503).send(response);
   });

@@ -145,13 +145,16 @@ function resolveSecret(
     throw new ConfigurationError([`${name} and ${name}_FILE cannot both be set`]);
   }
   if (!file) return direct;
+  let value: string;
   try {
-    const value = readFileSync(file, 'utf8').trim();
-    if (!value) throw new Error('empty secret');
-    return value;
+    value = readFileSync(file, 'utf8').trim();
   } catch {
     throw new ConfigurationError([`${name}_FILE could not be read`]);
   }
+  if (!value) {
+    throw new ConfigurationError([`${name}_FILE is empty`]);
+  }
+  return value;
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): ApiConfig {

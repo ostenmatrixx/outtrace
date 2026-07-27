@@ -338,6 +338,125 @@ describe('Phase 2 incident engine', () => {
     ).toEqual({ count: 6 });
   });
 
+  it('keeps notification claims inside the lease budget and counts only retained claims', async () => {
+    await pool.query(
+      `
+        INSERT INTO incidents (
+          id,
+          workspace_id,
+          process_instance_id,
+          incident_type,
+          severity,
+          affected_stage,
+          technical_message,
+          business_message
+        )
+        SELECT
+          'incident_claim_' || value,
+          'ws_engine',
+          'instance_engine',
+          'reported_failure',
+          'high',
+          'claim_stage_' || value,
+          'Claim test',
+          'Claim test'
+        FROM generate_series(1, 9) AS value;
+
+        INSERT INTO incident_notification_outbox (
+          id,
+          workspace_id,
+          incident_id,
+          notification_version
+        )
+        SELECT
+          'notification_claim_' || value,
+          'ws_engine',
+          'incident_claim_' || value,
+          1
+        FROM generate_series(1, 9) AS value;
+      `,
+    );
+    const config = {
+      slackWebhookUrls: {
+        ws_engine: 'https://hooks.slack.test/services/claim-budget',
+      },
+      slackMinimumSeverity: 'low' as const,
+      dashboardBaseUrl: 'https://outtrace.example',
+    };
+    const fetcher = vi.fn(async () => new Response('ok', { status: 200 }));
+
+    await expect(deliverSlackNotifications(pool, config, fetcher)).resolves.toBe(8);
+    expect(fetcher).toHaveBeenCalledTimes(8);
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM incident_notification_outbox WHERE sent_at IS NULL`,
+        )
+      ).rows[0],
+    ).toEqual({ count: 1 });
+
+    await pool.query(`TRUNCATE incident_notification_outbox, incidents CASCADE`);
+    await pool.query(
+      `
+        INSERT INTO incidents (
+          id,
+          workspace_id,
+          process_instance_id,
+          incident_type,
+          severity,
+          affected_stage,
+          technical_message,
+          business_message
+        )
+        VALUES (
+          'incident_lost_claim',
+          'ws_engine',
+          'instance_engine',
+          'reported_failure',
+          'high',
+          'lost_claim',
+          'Lost claim test',
+          'Lost claim test'
+        );
+        INSERT INTO incident_notification_outbox (
+          id,
+          workspace_id,
+          incident_id,
+          notification_version
+        )
+        VALUES (
+          'notification_lost_claim',
+          'ws_engine',
+          'incident_lost_claim',
+          1
+        );
+      `,
+    );
+    const reclaimingFetcher = vi.fn(async () => {
+      await pool.query(
+        `
+          UPDATE incident_notification_outbox
+          SET claimed_at = now(), claim_token = 'reclaimed_by_other_worker'
+          WHERE id = 'notification_lost_claim'
+        `,
+      );
+      return new Response('ok', { status: 200 });
+    });
+
+    await expect(deliverSlackNotifications(pool, config, reclaimingFetcher)).resolves.toBe(0);
+    expect(
+      (
+        await pool.query(
+          `
+            SELECT sent_at, claim_token
+            FROM incident_notification_outbox
+            WHERE id = 'notification_lost_claim'
+          `,
+        )
+      ).rows,
+    ).toEqual([{ sent_at: null, claim_token: 'reclaimed_by_other_worker' }]);
+  });
+
   it('routes each workspace only to its own webhook and escapes Slack control text', async () => {
     await pool.query(
       `
@@ -492,15 +611,18 @@ describe('Phase 2 incident engine', () => {
           `,
         )
       ).rows,
-    ).toEqual(
-      expect.arrayContaining([
-        {
-          affected_stage: 'account_created',
-          status: 'resolved',
-          resolution_reason: 'condition_cleared',
-        },
-      ]),
-    );
+    ).toEqual([
+      {
+        affected_stage: 'account_created',
+        status: 'resolved',
+        resolution_reason: 'condition_cleared',
+      },
+      {
+        affected_stage: 'welcome_sent',
+        status: 'resolved',
+        resolution_reason: 'condition_cleared',
+      },
+    ]);
   });
 
   it('paginates through more than 500 deadline candidates', async () => {
@@ -661,6 +783,14 @@ describe('Phase 2 incident engine', () => {
             'evaluation-pending-event',
             NULL,
             '2026-01-01T00:00:00Z'
+          ),
+          (
+            'evaluation_old_two',
+            'ws_engine',
+            'instance_engine',
+            'evaluation-old-event-two',
+            '2026-01-01T00:00:00Z',
+            '2026-01-01T00:00:00Z'
           );
         INSERT INTO incidents (
           id,
@@ -702,8 +832,8 @@ describe('Phase 2 incident engine', () => {
     );
 
     await expect(
-      enforceOutboxRetention(pool, new Date('2026-07-24T00:00:00Z'), 90, 100),
-    ).resolves.toBe(2);
+      enforceOutboxRetention(pool, new Date('2026-07-24T00:00:00Z'), 90, 1, 2),
+    ).resolves.toBe(3);
     expect((await pool.query(`SELECT id FROM event_evaluation_outbox`)).rows).toEqual([
       { id: 'evaluation_pending' },
     ]);
@@ -734,6 +864,12 @@ describe('Phase 2 incident engine', () => {
           ),
           (
             'ws_engine',
+            'idempotency-expired-two',
+            'instance_engine',
+            '2025-01-01T00:00:00Z'
+          ),
+          (
+            'ws_engine',
             'idempotency-recent',
             'instance_engine',
             '2026-07-01T00:00:00Z'
@@ -754,8 +890,8 @@ describe('Phase 2 incident engine', () => {
     );
 
     await expect(
-      enforceIdempotencyRetention(pool, new Date('2026-07-24T00:00:00Z'), 90, 100),
-    ).resolves.toBe(1);
+      enforceIdempotencyRetention(pool, new Date('2026-07-24T00:00:00Z'), 90, 1, 2),
+    ).resolves.toBe(2);
     expect(
       (
         await pool.query(

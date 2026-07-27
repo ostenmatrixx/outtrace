@@ -102,9 +102,9 @@ describe('global API boundary', () => {
     });
     apps.push(app);
 
-    expect((await app.inject({ method: 'GET', url: '/live' })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/live' })).statusCode).toBe(200);
-    const limited = await app.inject({ method: 'GET', url: '/live' });
+    expect((await app.inject({ method: 'GET', url: '/v1/session' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/v1/session' })).statusCode).toBe(401);
+    const limited = await app.inject({ method: 'GET', url: '/v1/session' });
     expect(limited.statusCode).toBe(429);
     expect(limited.json()).toMatchObject({
       error: {
@@ -112,6 +112,8 @@ describe('global API boundary', () => {
         message: 'Too many API requests. Please retry later.',
       },
     });
+    expect((await app.inject({ method: 'GET', url: '/live' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/ready' })).statusCode).toBe(200);
   });
 });
 

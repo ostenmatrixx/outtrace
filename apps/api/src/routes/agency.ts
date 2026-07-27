@@ -187,7 +187,7 @@ export async function registerAgencyRoutes(app: FastifyInstance): Promise<void> 
         request.outtraceOperator!,
         processId,
         credentialId,
-        parseOrThrow(processCredentialRevokeSchema, request.body),
+        parseOrThrow(processCredentialRevokeSchema, request.body ?? {}),
       );
     },
   );

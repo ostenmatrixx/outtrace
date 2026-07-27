@@ -419,11 +419,20 @@ describe('Outtrace API PostgreSQL integration', () => {
       duplicate: true,
       processInstanceId: first.json().processInstanceId,
     });
-    expect((await pool.query(`SELECT count(*)::int AS count FROM events`)).rows[0]).toEqual({
-      count: 0,
-    });
     expect(
-      (await pool.query(`SELECT count(*)::int AS count FROM event_idempotency_keys`)).rows[0],
+      (
+        await pool.query(`SELECT count(*)::int AS count FROM events WHERE workspace_id = $1`, [
+          workspaceOne.id,
+        ])
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM event_idempotency_keys WHERE workspace_id = $1`,
+          [workspaceOne.id],
+        )
+      ).rows[0],
     ).toEqual({ count: 1 });
   });
 
@@ -1136,6 +1145,30 @@ describe('Outtrace API PostgreSQL integration', () => {
         )
       ).statusCode,
     ).toBe(401);
+
+    const defaultReasonCredential = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { revokeExisting: false },
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    const defaultReasonList = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    const defaultReasonRecord = (
+      defaultReasonList.json().credentials as Array<Record<string, unknown>>
+    ).find((credential) => credential.keyId === defaultReasonCredential.json().keyId)!;
+    const defaultReasonRevocation = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      url: `/v1/processes/${processId}/credentials/${String(defaultReasonRecord.id)}/revoke`,
+    });
+    expect(defaultReasonRevocation.statusCode).toBe(200);
+    expect(defaultReasonRevocation.json()).toMatchObject({
+      revocationReason: 'Revoked by workspace owner',
+    });
   });
 
   it('serializes owner changes and never counts invited owners as active', async () => {
