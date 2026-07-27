@@ -39,6 +39,7 @@ export function startWorkerApplication(
       ? {
           pool: {} as Phase2Runtime['pool'],
           async close() {},
+          getStatus: () => 'ready' as const,
           start() {},
           async tick() {},
         }
@@ -60,7 +61,10 @@ export function startWorkerApplication(
     if (redisStatus === 'degraded' || workerStatus === 'degraded') {
       return 'degraded';
     }
-    if (redisStatus === 'ready' && workerStatus === 'ready') {
+    if (runtime.getStatus() === 'degraded') {
+      return 'degraded';
+    }
+    if (redisStatus === 'ready' && workerStatus === 'ready' && runtime.getStatus() === 'ready') {
       return 'ready';
     }
     return 'starting';

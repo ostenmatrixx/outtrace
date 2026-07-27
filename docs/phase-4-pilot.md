@@ -53,8 +53,8 @@ Before a partner starts:
   unnecessary personal or sensitive data.
 - The partner can store the process credential in the source platform's encrypted connection or
   secret store.
-- The partner understands that credential revocation and automatic recovery are not available in
-  this slice.
+- The partner understands the credential rotation and revocation procedure and that automatic
+  workflow recovery is not available in this slice.
 
 ## Onboarding flow
 
@@ -134,8 +134,9 @@ curl --request POST \
   --data '{}'
 ```
 
-The replacement response is also shown once. This endpoint adds another valid credential; it does
-not revoke earlier credentials.
+The replacement response is also shown once. Pass `{"revokeExisting":true}` to revoke prior active
+credentials atomically. For a no-downtime rotation, leave the default `false`, canary the new key,
+then revoke the prior credential by ID.
 
 ### 2. Instrument a sandbox execution
 
@@ -368,10 +369,11 @@ For a definition rollout failure, archive the failed replacement, reactivate the
 restore its source-side credential and process key, and verify a new event. Archival is reversible
 and preserves evidence; it is the preferred process-level rollback over deletion.
 
-Issuing another process credential does not invalidate an exposed credential. If a process secret
-may be compromised, stop that source integration, restrict access to the deployment, and escalate
-for operational credential invalidation before resuming. Do not describe credential issuance as
-rotation until a revocation path exists.
+If a process secret may be compromised, stop that source integration and immediately revoke the
+credential through the owner API. For planned rotation, either issue a replacement with
+`revokeExisting: true` or canary the replacement before revoking the old credential. Follow the
+[production runbook](production-runbook.md) and verify that the revoked key returns `401` before
+resuming.
 
 ## Manual smoke checklist
 
@@ -403,8 +405,8 @@ Complete this checklist against the release candidate with PostgreSQL and Redis 
 - [ ] Cross-workspace and restricted-client reads, writes, and summary queries do not leak data.
 - [ ] The pilot summary uses the half-open 28-day quality window, exposes unreviewed incidents, and
       returns `null` for false-positive rate when no incidents are reviewed.
-- [ ] Reissuing a credential returns a new plaintext secret once and leaves prior credentials valid,
-      matching the documented limitation.
+- [ ] Atomic replacement returns a new plaintext secret once, immediately rejects prior keys, and
+      records creation and revocation audit entries.
 - [ ] Ingestion remains below 500 milliseconds at representative pilot load; events appear in the
       dashboard within 10 seconds; configured Slack notifications arrive within one minute.
 - [ ] `npm run verify` passes with no checked-in secrets, logs, reports, or customer data.

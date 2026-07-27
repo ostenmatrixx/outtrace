@@ -49,7 +49,11 @@ export async function registerEventRoutes(app: FastifyInstance): Promise<void> {
       },
       preParsing: async (request, _reply, payload) => {
         const credentials = readIngestionCredentials(request);
-        const principal = await authenticateIngestion(app.outtrace.pool, credentials);
+        const principal = await authenticateIngestion(
+          app.outtrace.pool,
+          credentials,
+          app.outtrace.allowLegacyWorkspaceCredentials,
+        );
         request.outtraceIngestion = principal;
         request.outtraceWorkspaceId = principal.workspaceId;
         return payload;

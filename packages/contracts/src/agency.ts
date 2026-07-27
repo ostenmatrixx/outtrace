@@ -61,6 +61,13 @@ export const memberInviteResponseSchema = z.object({
   accessKey: z.string().min(1),
 });
 
+export const memberCredentialResponseSchema = z.object({
+  memberId: z.string().min(1),
+  accessKeyId: z.string().min(1),
+  accessKey: z.string().min(1),
+  rotatedAt: z.iso.datetime(),
+});
+
 export const processSummarySchema = z.object({
   id: z.string().min(1),
   key: z.string().min(1),
@@ -142,6 +149,29 @@ export const processIngestionCredentialSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 
+export const processCredentialIssueSchema = z
+  .object({
+    revokeExisting: z.boolean().default(false),
+  })
+  .default({ revokeExisting: false });
+
+export const processCredentialSummarySchema = z.object({
+  id: z.string().min(1),
+  processId: z.string().min(1),
+  keyId: z.string().min(1),
+  createdAt: z.iso.datetime(),
+  revokedAt: z.iso.datetime().nullable(),
+  revocationReason: z.string().nullable(),
+});
+
+export const processCredentialListResponseSchema = z.object({
+  credentials: z.array(processCredentialSummarySchema),
+});
+
+export const processCredentialRevokeSchema = z.object({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+
 export const processCreateResponseSchema = z.object({
   process: processSummarySchema,
   stages: z.array(processStageSchema),
@@ -195,11 +225,16 @@ export type MemberSummary = z.infer<typeof memberSummarySchema>;
 export type MemberInvite = z.infer<typeof memberInviteSchema>;
 export type MemberUpdate = z.infer<typeof memberUpdateSchema>;
 export type MemberInviteResponse = z.infer<typeof memberInviteResponseSchema>;
+export type MemberCredentialResponse = z.infer<typeof memberCredentialResponseSchema>;
 export type ProcessSummary = z.infer<typeof processSummarySchema>;
 export type ProcessStageCreate = z.infer<typeof processStageCreateSchema>;
 export type ProcessCreate = z.infer<typeof processCreateSchema>;
 export type ProcessStage = z.infer<typeof processStageSchema>;
 export type ProcessIngestionCredential = z.infer<typeof processIngestionCredentialSchema>;
+export type ProcessCredentialIssue = z.infer<typeof processCredentialIssueSchema>;
+export type ProcessCredentialSummary = z.infer<typeof processCredentialSummarySchema>;
+export type ProcessCredentialListResponse = z.infer<typeof processCredentialListResponseSchema>;
+export type ProcessCredentialRevoke = z.infer<typeof processCredentialRevokeSchema>;
 export type ProcessCreateResponse = z.infer<typeof processCreateResponseSchema>;
 export type ProcessCredentialResponse = z.infer<typeof processCredentialResponseSchema>;
 export type ProcessUpdate = z.infer<typeof processUpdateSchema>;

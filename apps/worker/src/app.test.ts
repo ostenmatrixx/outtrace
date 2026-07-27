@@ -18,8 +18,15 @@ const config: WorkerConfig = {
   phase2PollIntervalMs: 1_000,
   phase2SweepIntervalMs: 30_000,
   retentionSweepIntervalMs: 3_600_000,
+  retentionBatchSize: 1_000,
+  retentionMaxBatchesPerSweep: 10,
+  idempotencyRetentionDays: 365,
+  outboxRetentionDays: 90,
+  slackWebhookUrls: {},
   slackMinimumSeverity: 'high',
   dashboardBaseUrl: 'http://localhost:5173',
+  healthHost: '127.0.0.1',
+  healthPort: 3001,
 };
 
 function loggerSpies(): Logger {

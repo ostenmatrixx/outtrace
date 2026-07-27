@@ -40,13 +40,14 @@ definition, move the source integration, then archive the superseded definition.
 
 Process creation returns a credential identifier and plaintext secret once. Only the secret hash is
 stored. A process-scoped credential can authenticate `POST /v1/events` only when the event's
-`processKey` matches its process. Existing workspace-scoped ingestion credentials remain valid for
-backward compatibility, but new pilot integrations should use process-scoped credentials.
+`processKey` matches its process. Existing workspace-scoped ingestion credentials originally
+remained valid for backward compatibility, but new pilot integrations should use process-scoped
+credentials. ADR 0005 limits the legacy fallback to development and test; production accepts
+process-scoped ingestion keys.
 
-An owner can issue another credential for the same process. Issuing a credential does not reveal an
-old secret and does not revoke older credentials. Rotation, revocation, credential expiry, and a
-hosted secret manager are separate security work. A newly issued credential must therefore not be
-described as a revocation.
+This Phase 4 decision originally allowed an owner to issue another credential without revoking the
+old secret. ADR 0005 supersedes that limitation with credential listing, atomic rotation, audited
+revocation, and secret-file deployment configuration.
 
 ### Persistent connection evidence
 
@@ -117,8 +118,8 @@ generate recovery actions.
 ## Consequences
 
 - Owners can connect production workflows without direct database changes.
-- A leaked credential has a smaller process-level blast radius, but the absence of revocation means
-  credential handling and external secret-store controls remain important.
+- A leaked credential has a smaller process-level blast radius, and owners can revoke it
+  immediately. External secret-store controls remain mandatory.
 - Definition immutability protects historical and in-flight incident semantics at the cost of
   creating a replacement process when stage rules materially change. Archival removes superseded
   definitions from active telemetry and activation metrics without deleting their evidence.
@@ -128,5 +129,5 @@ generate recovery actions.
   so a low false-positive rate cannot be claimed from a small denominator.
 - Existing credentials, ingestion behavior, incident lifecycle, client reports, and role boundaries
   remain backward compatible.
-- Billing, flexible analytics windows, credential revocation, process editing, and all recovery
+- Billing, flexible analytics windows, credential expiry, process editing, and all recovery
   execution are explicitly deferred.

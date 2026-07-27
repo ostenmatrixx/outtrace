@@ -19,14 +19,15 @@
     "lint": "eslint .",
     "test": "npm run build --workspace @outtrace/contracts && npm run test --workspaces --if-present",
     "test:integration": "npm run build --workspace @outtrace/contracts && dotenv -e .env -- npm run test:integration --workspace @outtrace/api && dotenv -e .env -- npm run test:integration --workspace @outtrace/worker",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run build --workspace @outtrace/contracts && npm run typecheck --workspaces --if-present",
+    "workspace:bootstrap": "dotenv -e .env -- npm run workspace:bootstrap --workspace @outtrace/api",
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm test && npm run test:integration && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
     "concurrently": "^9.2.1",
     "dotenv-cli": "^11.0.0",
-    "eslint": "^9.39.1",
+    "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^16.5.0",

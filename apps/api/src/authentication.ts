@@ -82,13 +82,14 @@ export function readIngestionCredentials(request: FastifyRequest): IngestionCred
 export async function authenticateIngestion(
   pool: pg.Pool,
   credentials: IngestionCredentials,
+  allowLegacyWorkspaceCredentials = true,
 ): Promise<IngestionPrincipal> {
   try {
     const processCredentialResult = await pool.query<ProcessCredentialRow>(
       `
         SELECT workspace_id, process_id, key_hash
         FROM process_ingestion_credentials
-        WHERE key_id = $1
+        WHERE key_id = $1 AND revoked_at IS NULL
         LIMIT 1
       `,
       [credentials.keyId],
@@ -102,6 +103,10 @@ export async function authenticateIngestion(
         processId: processCredential.process_id,
         workspaceId: processCredential.workspace_id,
       };
+    }
+
+    if (!allowLegacyWorkspaceCredentials) {
+      throw authenticationInvalid();
     }
 
     const result = await pool.query<WorkspaceRow>(
@@ -154,13 +159,16 @@ export function readOperatorCredentials(request: FastifyRequest): OperatorCreden
 export async function authenticateOperator(
   pool: pg.Pool,
   credentials: OperatorCredentials,
+  allowLegacyWorkspaceCredentials = true,
 ): Promise<string> {
-  return (await authenticateOperatorPrincipal(pool, credentials)).workspaceId;
+  return (await authenticateOperatorPrincipal(pool, credentials, allowLegacyWorkspaceCredentials))
+    .workspaceId;
 }
 
 export async function authenticateOperatorPrincipal(
   pool: pg.Pool,
   credentials: OperatorCredentials,
+  allowLegacyWorkspaceCredentials = true,
 ): Promise<OperatorPrincipal> {
   try {
     const memberResult = await pool.query<MemberRow>(
@@ -208,6 +216,10 @@ export async function authenticateOperatorPrincipal(
         role: member.role,
         clientIds: member.role === 'viewer' ? member.client_ids : null,
       };
+    }
+
+    if (!allowLegacyWorkspaceCredentials) {
+      throw operatorAuthenticationInvalid();
     }
 
     const result = await pool.query<WorkspaceRow>(

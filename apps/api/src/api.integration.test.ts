@@ -5,6 +5,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { createApp } from './app.js';
+import { bootstrapWorkspace } from './bootstrap-workspace.js';
 import { sha256Hex } from './crypto.js';
 import { runMigrations } from './migrations.js';
 
@@ -248,6 +249,66 @@ describe('Outtrace API PostgreSQL integration', () => {
     });
   });
 
+  it('bootstraps a production workspace with one active owner and no legacy ingestion key', async () => {
+    const bootstrap = await bootstrapWorkspace(pool, {
+      workspaceId: 'ws_production_bootstrap',
+      workspaceName: 'Production agency',
+      ownerName: 'Initial Owner',
+      ownerEmail: 'OWNER@EXAMPLE.COM',
+    });
+
+    expect(
+      (
+        await pool.query(
+          `
+            SELECT
+              workspaces.ingestion_key_id,
+              workspaces.ingestion_key_hash,
+              workspace_members.email,
+              workspace_members.role,
+              workspace_members.status
+            FROM workspaces
+            JOIN workspace_members
+              ON workspace_members.workspace_id = workspaces.id
+            WHERE workspaces.id = $1
+          `,
+          [bootstrap.workspaceId],
+        )
+      ).rows,
+    ).toEqual([
+      {
+        ingestion_key_id: null,
+        ingestion_key_hash: null,
+        email: 'owner@example.com',
+        role: 'owner',
+        status: 'active',
+      },
+    ]);
+
+    const session = await app.inject({
+      headers: {
+        'x-outtrace-operator-key-id': bootstrap.accessKeyId,
+        'x-outtrace-operator-key': bootstrap.accessKey,
+      },
+      method: 'GET',
+      url: '/v1/session',
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({
+      workspaceId: bootstrap.workspaceId,
+      memberId: bootstrap.memberId,
+      role: 'owner',
+    });
+    await expect(
+      bootstrapWorkspace(pool, {
+        workspaceId: 'ws_production_bootstrap',
+        workspaceName: 'Duplicate',
+        ownerName: 'Other Owner',
+        ownerEmail: 'other@example.com',
+      }),
+    ).rejects.toThrow('already exists');
+  });
+
   it('strips unknown top-level data and rejects invalid payloads safely', async () => {
     const accepted = await postEvent(
       eventPayload({
@@ -336,6 +397,42 @@ describe('Outtrace API PostgreSQL integration', () => {
     });
     expect(
       (await pool.query('SELECT count(*)::int AS count FROM process_instances')).rows[0],
+    ).toEqual({ count: 1 });
+  });
+
+  it('keeps retries idempotent after raw event retention', async () => {
+    const first = await postEvent(eventPayload({ eventId: 'retained-idempotency-event' }));
+    expect(first.statusCode).toBe(202);
+    await pool.query(`DELETE FROM events WHERE workspace_id = $1 AND external_event_id = $2`, [
+      workspaceOne.id,
+      'retained-idempotency-event',
+    ]);
+
+    const retry = await postEvent(
+      eventPayload({
+        eventId: 'retained-idempotency-event',
+        instanceKey: 'attempted-recreated-instance',
+      }),
+    );
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({
+      duplicate: true,
+      processInstanceId: first.json().processInstanceId,
+    });
+    expect(
+      (
+        await pool.query(`SELECT count(*)::int AS count FROM events WHERE workspace_id = $1`, [
+          workspaceOne.id,
+        ])
+      ).rows[0],
+    ).toEqual({ count: 0 });
+    expect(
+      (
+        await pool.query(
+          `SELECT count(*)::int AS count FROM event_idempotency_keys WHERE workspace_id = $1`,
+          [workspaceOne.id],
+        )
+      ).rows[0],
     ).toEqual({ count: 1 });
   });
 
@@ -954,6 +1051,325 @@ describe('Outtrace API PostgreSQL integration', () => {
     expect(processList.json().processes).toContainEqual(
       expect.objectContaining({ id: processId, lifecycleStatus: 'archived' }),
     );
+  });
+
+  it('lists, rotates, and immediately revokes process-scoped credentials', async () => {
+    const created = await createPilotProcess('credential-lifecycle');
+    const processId = created.json().process.id as string;
+    const originalKey = created.json().credential.key as string;
+    const originalKeyId = created.json().credential.keyId as string;
+
+    const initialList = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    expect(initialList.statusCode).toBe(200);
+    expect(initialList.json().credentials).toEqual([
+      expect.objectContaining({ keyId: originalKeyId, revokedAt: null }),
+    ]);
+
+    const rotated = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { revokeExisting: true },
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    expect(rotated.statusCode).toBe(201);
+    const replacementKey = rotated.json().key as string;
+    const replacementKeyId = rotated.json().keyId as string;
+
+    expect(
+      (
+        await postEvent(
+          eventPayload({
+            eventId: 'revoked-original',
+            processKey: 'credential-lifecycle',
+            stage: 'received',
+          }),
+          { key: originalKey, keyId: originalKeyId },
+        )
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await postEvent(
+          eventPayload({
+            eventId: 'replacement-accepted',
+            processKey: 'credential-lifecycle',
+            stage: 'received',
+          }),
+          { key: replacementKey, keyId: replacementKeyId },
+        )
+      ).statusCode,
+    ).toBe(202);
+
+    const credentialList = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    const replacement = (credentialList.json().credentials as Array<Record<string, unknown>>).find(
+      (credential) => credential.keyId === replacementKeyId,
+    )!;
+    expect(
+      (credentialList.json().credentials as Array<Record<string, unknown>>).find(
+        (credential) => credential.keyId === originalKeyId,
+      ),
+    ).toMatchObject({
+      revokedAt: expect.any(String),
+      revocationReason: 'Rotated by replacement credential',
+    });
+
+    const revoked = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { reason: 'Canary completed' },
+      url: `/v1/processes/${processId}/credentials/${String(replacement.id)}/revoke`,
+    });
+    expect(revoked.statusCode).toBe(200);
+    expect(revoked.json()).toMatchObject({
+      keyId: replacementKeyId,
+      revokedAt: expect.any(String),
+      revocationReason: 'Canary completed',
+    });
+    expect(
+      (
+        await postEvent(
+          eventPayload({
+            eventId: 'revoked-replacement',
+            processKey: 'credential-lifecycle',
+            stage: 'completed',
+          }),
+          { key: replacementKey, keyId: replacementKeyId },
+        )
+      ).statusCode,
+    ).toBe(401);
+
+    const defaultReasonCredential = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      payload: { revokeExisting: false },
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    const defaultReasonList = await app.inject({
+      headers: operatorHeaders(),
+      method: 'GET',
+      url: `/v1/processes/${processId}/credentials`,
+    });
+    const defaultReasonRecord = (
+      defaultReasonList.json().credentials as Array<Record<string, unknown>>
+    ).find((credential) => credential.keyId === defaultReasonCredential.json().keyId)!;
+    const defaultReasonRevocation = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      url: `/v1/processes/${processId}/credentials/${String(defaultReasonRecord.id)}/revoke`,
+    });
+    expect(defaultReasonRevocation.statusCode).toBe(200);
+    expect(defaultReasonRevocation.json()).toMatchObject({
+      revocationReason: 'Revoked by workspace owner',
+    });
+  });
+
+  it('serializes owner changes and never counts invited owners as active', async () => {
+    const insertOwner = async (id: string, status: 'active' | 'invited'): Promise<void> => {
+      await pool.query(
+        `
+          INSERT INTO workspace_members (
+            id,
+            workspace_id,
+            name,
+            email,
+            role,
+            status,
+            access_key_id,
+            access_key_hash
+          )
+          VALUES ($1, $2, $1, $1 || '@example.com', 'owner', $3, $1 || '_key', $4)
+        `,
+        [id, workspaceOne.id, status, sha256Hex(`${id}_secret`)],
+      );
+    };
+
+    await insertOwner('owner_active', 'active');
+    await insertOwner('owner_invited', 'invited');
+    expect(
+      (
+        await app.inject({
+          headers: operatorHeaders(),
+          method: 'PATCH',
+          payload: { status: 'disabled' },
+          url: '/v1/members/owner_invited',
+        })
+      ).statusCode,
+    ).toBe(200);
+    const invitedDoesNotCount = await app.inject({
+      headers: operatorHeaders(),
+      method: 'PATCH',
+      payload: { status: 'disabled' },
+      url: '/v1/members/owner_active',
+    });
+    expect(invitedDoesNotCount.statusCode).toBe(409);
+
+    await pool.query(`UPDATE workspace_members SET status = 'active' WHERE id = 'owner_invited'`);
+    const concurrent = await Promise.all([
+      app.inject({
+        headers: operatorHeaders(),
+        method: 'PATCH',
+        payload: { status: 'disabled' },
+        url: '/v1/members/owner_active',
+      }),
+      app.inject({
+        headers: operatorHeaders(),
+        method: 'PATCH',
+        payload: { status: 'disabled' },
+        url: '/v1/members/owner_invited',
+      }),
+    ]);
+    expect(concurrent.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+    expect(
+      (
+        await pool.query(
+          `
+            SELECT count(*)::int AS count
+            FROM workspace_members
+            WHERE workspace_id = $1 AND role = 'owner' AND status = 'active'
+          `,
+          [workspaceOne.id],
+        )
+      ).rows[0],
+    ).toEqual({ count: 1 });
+  });
+
+  it('rotates member credentials atomically and uses disablement as revocation', async () => {
+    await pool.query(
+      `
+        INSERT INTO workspace_members (
+          id,
+          workspace_id,
+          name,
+          email,
+          role,
+          status,
+          access_key_id,
+          access_key_hash
+        )
+        VALUES (
+          'member_rotate',
+          $1,
+          'Rotating operator',
+          'rotate@example.com',
+          'operator',
+          'active',
+          'member_rotate_old_key',
+          $2
+        )
+      `,
+      [workspaceOne.id, sha256Hex('member-rotate-old-secret')],
+    );
+    const rotated = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      url: '/v1/members/member_rotate/credentials/rotate',
+    });
+    expect(rotated.statusCode).toBe(200);
+    expect(rotated.json()).toMatchObject({
+      memberId: 'member_rotate',
+      accessKeyId: expect.stringMatching(/^member_key_/),
+      accessKey: expect.stringMatching(/^outtrace_member_/),
+    });
+
+    const oldSession = await app.inject({
+      headers: {
+        'x-outtrace-operator-key-id': 'member_rotate_old_key',
+        'x-outtrace-operator-key': 'member-rotate-old-secret',
+      },
+      method: 'GET',
+      url: '/v1/session',
+    });
+    expect(oldSession.statusCode).toBe(401);
+    const newHeaders = {
+      'x-outtrace-operator-key-id': rotated.json().accessKeyId as string,
+      'x-outtrace-operator-key': rotated.json().accessKey as string,
+    };
+    expect(
+      (
+        await app.inject({
+          headers: newHeaders,
+          method: 'GET',
+          url: '/v1/session',
+        })
+      ).statusCode,
+    ).toBe(200);
+
+    expect(
+      (
+        await app.inject({
+          headers: operatorHeaders(),
+          method: 'PATCH',
+          payload: { status: 'disabled' },
+          url: '/v1/members/member_rotate',
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          headers: newHeaders,
+          method: 'GET',
+          url: '/v1/session',
+        })
+      ).statusCode,
+    ).toBe(401);
+
+    const disabledRotation = await app.inject({
+      headers: operatorHeaders(),
+      method: 'POST',
+      url: '/v1/members/member_rotate/credentials/rotate',
+    });
+    expect(disabledRotation.statusCode).toBe(200);
+    const disabledRotationHeaders = {
+      'x-outtrace-operator-key-id': disabledRotation.json().accessKeyId as string,
+      'x-outtrace-operator-key': disabledRotation.json().accessKey as string,
+    };
+    expect(
+      (
+        await app.inject({
+          headers: disabledRotationHeaders,
+          method: 'GET',
+          url: '/v1/session',
+        })
+      ).statusCode,
+    ).toBe(401);
+
+    expect(
+      (
+        await app.inject({
+          headers: operatorHeaders(),
+          method: 'PATCH',
+          payload: { status: 'active' },
+          url: '/v1/members/member_rotate',
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(
+      (
+        await app.inject({
+          headers: newHeaders,
+          method: 'GET',
+          url: '/v1/session',
+        })
+      ).statusCode,
+    ).toBe(401);
+    expect(
+      (
+        await app.inject({
+          headers: disabledRotationHeaders,
+          method: 'GET',
+          url: '/v1/session',
+        })
+      ).statusCode,
+    ).toBe(200);
   });
 
   it('records tenant-scoped incident feedback and returns it with incident detail', async () => {

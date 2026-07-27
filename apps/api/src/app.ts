@@ -1,4 +1,5 @@
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify';
 import type pg from 'pg';
@@ -17,18 +18,26 @@ export interface AppDependencies {
 }
 
 export interface CreateAppOptions {
+  allowLegacyWorkspaceCredentials?: boolean;
+  apiRateLimitMax?: number;
   corsOrigin?: string;
   dependencies: AppDependencies;
   eventRateLimitMax?: number;
   logger?: FastifyServerOptions['logger'];
+  production?: boolean;
+  trustProxy?: boolean;
 }
 
-class EventRateLimitError extends Error {
+class RateLimitError extends Error {
   readonly statusCode = 429;
 
-  constructor() {
-    super('Too many event ingestion requests. Please retry later.');
-    this.name = 'EventRateLimitError';
+  constructor(eventIngestion: boolean) {
+    super(
+      eventIngestion
+        ? 'Too many event ingestion requests. Please retry later.'
+        : 'Too many API requests. Please retry later.',
+    );
+    this.name = 'RateLimitError';
   }
 
   toResponse() {
@@ -53,14 +62,16 @@ function isInvalidJsonError(error: unknown): boolean {
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
   const app = Fastify({
     logger: options.logger ?? false,
+    trustProxy: options.trustProxy ?? false,
   });
 
   app.decorate('outtrace', {
     ...options.dependencies,
+    allowLegacyWorkspaceCredentials: options.allowLegacyWorkspaceCredentials ?? true,
     eventRateLimitMax: options.eventRateLimitMax ?? 120,
   });
   app.setErrorHandler((error, request, reply) => {
-    if (error instanceof EventRateLimitError) {
+    if (error instanceof RateLimitError) {
       return reply.code(error.statusCode).send(error.toResponse());
     }
 
@@ -86,6 +97,16 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     });
   });
 
+  await app.register(helmet, {
+    contentSecurityPolicy: false,
+    hsts: options.production
+      ? {
+          includeSubDomains: true,
+          maxAge: 31_536_000,
+          preload: true,
+        }
+      : false,
+  });
   await app.register(cors, {
     allowedHeaders: [
       'accept',
@@ -100,8 +121,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     origin: options.corsOrigin ?? 'http://localhost:5173',
   });
   await app.register(rateLimit, {
-    errorResponseBuilder: () => new EventRateLimitError(),
-    global: false,
+    errorResponseBuilder: (request) => new RateLimitError(request.url.startsWith('/v1/events')),
+    global: true,
+    keyGenerator: (request) => request.ip,
+    max: options.apiRateLimitMax ?? 600,
+    timeWindow: '1 minute',
   });
   await app.register(registerHealthRoute);
   await app.register(registerEventRoutes);

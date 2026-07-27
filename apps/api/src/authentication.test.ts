@@ -76,6 +76,21 @@ describe('authenticateIngestion', () => {
     expect(error).toMatchObject({ code: 'DATABASE_FAILURE', statusCode: 503 });
     expect((error as Error).message).not.toContain('sensitive-host');
   });
+
+  it('rejects workspace-wide ingestion credentials when the legacy path is disabled', async () => {
+    const queries: string[] = [];
+    const pool = {
+      async query(sql: string) {
+        queries.push(sql);
+        return { rowCount: 0, rows: [] };
+      },
+    } as unknown as pg.Pool;
+
+    await expect(
+      authenticateIngestion(pool, { key: 'legacy-secret', keyId: 'legacy-key' }, false),
+    ).rejects.toMatchObject({ code: 'AUTHENTICATION_INVALID', statusCode: 401 });
+    expect(queries.some((sql) => sql.includes('FROM workspaces'))).toBe(false);
+  });
 });
 
 describe('authenticateOperator', () => {
@@ -95,5 +110,20 @@ describe('authenticateOperator', () => {
     await expect(
       authenticateOperator(pool, { key: 'ingestion-secret', keyId: 'operator_1' }),
     ).rejects.toMatchObject({ code: 'AUTHENTICATION_INVALID' });
+  });
+
+  it('rejects the workspace-wide operator credential when the legacy path is disabled', async () => {
+    const queries: string[] = [];
+    const pool = {
+      async query(sql: string) {
+        queries.push(sql);
+        return { rowCount: 0, rows: [] };
+      },
+    } as unknown as pg.Pool;
+
+    await expect(
+      authenticateOperator(pool, { key: 'legacy-secret', keyId: 'legacy-key' }, false),
+    ).rejects.toMatchObject({ code: 'AUTHENTICATION_INVALID', statusCode: 401 });
+    expect(queries.some((sql) => sql.includes('FROM workspaces'))).toBe(false);
   });
 });

@@ -83,10 +83,64 @@ describe('GET /health', () => {
       status: 'degraded',
     });
     expect(response.body).not.toContain('sensitive-host');
+
+    const readiness = await app.inject({ method: 'GET', url: '/ready' });
+    expect(readiness.statusCode).toBe(503);
+    expect(readiness.json()).toMatchObject({ status: 'degraded' });
+
+    const liveness = await app.inject({ method: 'GET', url: '/live' });
+    expect(liveness.statusCode).toBe(200);
+    expect(liveness.json()).toEqual({ service: 'outtrace-api', status: 'ok' });
+  });
+});
+
+describe('global API boundary', () => {
+  it('rate-limits non-ingestion routes by request origin', async () => {
+    const app = await createApp({
+      apiRateLimitMax: 2,
+      dependencies: { pool: fakePool(true), redis: fakeRedis(true) },
+    });
+    apps.push(app);
+
+    expect((await app.inject({ method: 'GET', url: '/v1/session' })).statusCode).toBe(401);
+    expect((await app.inject({ method: 'GET', url: '/v1/session' })).statusCode).toBe(401);
+    const limited = await app.inject({ method: 'GET', url: '/v1/session' });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toMatchObject({
+      error: {
+        code: 'RATE_LIMITED',
+        message: 'Too many API requests. Please retry later.',
+      },
+    });
+    expect((await app.inject({ method: 'GET', url: '/live' })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/ready' })).statusCode).toBe(200);
   });
 });
 
 describe('POST /v1/events request boundary', () => {
+  it('can disable legacy workspace-wide credentials at the application boundary', async () => {
+    const app = await createApp({
+      allowLegacyWorkspaceCredentials: false,
+      dependencies: { pool: fakePool(true), redis: fakeRedis(true) },
+    });
+    apps.push(app);
+
+    const response = await app.inject({
+      headers: {
+        'x-outtrace-key': 'valid-secret',
+        'x-outtrace-key-id': 'key_1',
+      },
+      method: 'POST',
+      payload: {},
+      url: '/v1/events',
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toMatchObject({
+      error: { code: 'AUTHENTICATION_INVALID' },
+    });
+  });
+
   it('returns a structured missing-auth error before database access', async () => {
     const app = await createApp({
       dependencies: { pool: fakePool(true), redis: fakeRedis(true) },

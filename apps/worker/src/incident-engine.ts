@@ -32,6 +32,7 @@ interface EventRow extends pg.QueryResultRow {
   source: string;
   execution_url: string | null;
   occurred_at: Date;
+  received_at: Date;
 }
 
 interface ExistingIncidentRow extends pg.QueryResultRow {
@@ -55,6 +56,11 @@ interface Candidate {
   triggeredAt: Date;
 }
 
+interface CandidateSet {
+  active: Map<string, Candidate>;
+  clearedSequence: Map<string, Candidate>;
+}
+
 export interface IncidentEvaluationResult {
   evaluated: true;
   created: number;
@@ -64,6 +70,14 @@ export interface IncidentEvaluationResult {
 }
 
 const candidateKey = (type: IncidentType, stage: string | null): string => `${type}:${stage ?? ''}`;
+
+function arrivedBefore(left: EventRow, right: EventRow): boolean {
+  return (
+    left.received_at < right.received_at ||
+    (left.received_at.getTime() === right.received_at.getTime() &&
+      left.external_event_id < right.external_event_id)
+  );
+}
 
 function latestEventsByStage(events: EventRow[]): Map<string, EventRow> {
   const latest = new Map<string, EventRow>();
@@ -127,14 +141,24 @@ function buildCandidates(
   stages: StageRow[],
   events: EventRow[],
   now: Date,
-): Map<string, Candidate> {
+): CandidateSet {
   const candidates = new Map<string, Candidate>();
+  const clearedSequence = new Map<string, Candidate>();
   const latestByStage = latestEventsByStage(events);
   const completedAt = completedAtByStage(events);
   const stageByKey = new Map(stages.map((stage) => [stage.key, stage]));
   const requiredStages = stages
     .filter((stage) => stage.required)
     .sort((a, b) => a.position - b.position);
+  // Arrival-order incidents use received_at; stage state and completion use occurred_at.
+  const earliestCompletedArrivalByStage = new Map<string, EventRow>();
+  for (const event of events) {
+    if (event.status !== 'completed') continue;
+    const current = earliestCompletedArrivalByStage.get(event.stage);
+    if (!current || arrivedBefore(event, current)) {
+      earliestCompletedArrivalByStage.set(event.stage, event);
+    }
+  }
 
   for (const [stageKey, event] of latestByStage) {
     if (event.status !== 'failed') continue;
@@ -148,7 +172,7 @@ function buildCandidates(
       businessMessage: `${stageName} failed for ${instance.client_name} process ${instance.process_name}, instance ${instance.instance_key}.`,
       source: event.source,
       executionUrl: event.execution_url,
-      triggeredAt: event.occurred_at,
+      triggeredAt: event.received_at,
     };
     candidates.set(candidateKey(candidate.type, candidate.stage), candidate);
   }
@@ -156,24 +180,32 @@ function buildCandidates(
   for (const event of events) {
     const stage = stageByKey.get(event.stage);
     if (!stage) continue;
-    const missingPredecessors = requiredStages.filter(
-      (required) => required.position < stage.position && !completedAt.has(required.key),
-    );
-    if (missingPredecessors.length === 0) continue;
-    const missingNames = missingPredecessors.map((required) => required.name).join(', ');
+    const predecessors = requiredStages.filter((required) => required.position < stage.position);
+    const missingAtOccurrence = predecessors.filter((required) => {
+      const completion = earliestCompletedArrivalByStage.get(required.key);
+      return !completion || !arrivedBefore(completion, event);
+    });
+    if (missingAtOccurrence.length === 0) continue;
+    const missingNames = missingAtOccurrence.map((required) => required.name).join(', ');
     const candidate: Candidate = {
       type: 'unexpected_sequence',
       severity: 'medium',
       stage: event.stage,
-      technicalMessage: `Stage ${event.stage} arrived before required predecessor stages: ${missingPredecessors
+      technicalMessage: `Stage ${event.stage} arrived before required predecessor stages: ${missingAtOccurrence
         .map((required) => required.key)
         .join(', ')}.`,
       businessMessage: `${stage.name} arrived before ${missingNames} for ${instance.instance_key}.`,
       source: event.source,
       executionUrl: event.execution_url,
-      triggeredAt: event.occurred_at,
+      triggeredAt: event.received_at,
     };
-    candidates.set(candidateKey(candidate.type, candidate.stage), candidate);
+    const key = candidateKey(candidate.type, candidate.stage);
+    if (missingAtOccurrence.some((required) => !completedAt.has(required.key))) {
+      if (!candidates.has(key)) candidates.set(key, candidate);
+      clearedSequence.delete(key);
+    } else if (!candidates.has(key) && !clearedSequence.has(key)) {
+      clearedSequence.set(key, candidate);
+    }
   }
 
   for (let index = 0; index < requiredStages.length; index += 1) {
@@ -215,7 +247,7 @@ function buildCandidates(
     candidates.set(candidateKey(candidate.type, candidate.stage), candidate);
   }
 
-  return candidates;
+  return { active: candidates, clearedSequence };
 }
 
 async function addAudit(
@@ -317,10 +349,11 @@ export async function evaluateProcessInstance(
             status,
             source,
             metadata->>'executionUrl' AS execution_url,
-            occurred_at
+            occurred_at,
+            received_at
           FROM events
           WHERE workspace_id = $1 AND process_instance_id = $2
-          ORDER BY occurred_at, external_event_id
+          ORDER BY received_at, external_event_id
         `,
       [workspaceId, processInstanceId],
     );
@@ -357,13 +390,64 @@ export async function evaluateProcessInstance(
       instance.completed_at = derivedState.completedAt;
     }
 
-    const candidates = buildCandidates(instance, stagesResult.rows, eventsResult.rows, now);
+    const candidateSet = buildCandidates(instance, stagesResult.rows, eventsResult.rows, now);
+    const candidates = candidateSet.active;
     const existing = new Map(
       incidentsResult.rows.map((incident) => [
         candidateKey(incident.incident_type, incident.affected_stage),
         incident,
       ]),
     );
+
+    for (const [key, candidate] of candidateSet.clearedSequence) {
+      if (existing.has(key) || candidates.has(key)) continue;
+      const incidentId = `incident_${randomUUID()}`;
+      await client.query(
+        `
+          INSERT INTO incidents (
+            id,
+            workspace_id,
+            process_instance_id,
+            incident_type,
+            severity,
+            status,
+            affected_stage,
+            technical_message,
+            business_message,
+            source,
+            execution_url,
+            resolved_at,
+            resolution_reason
+          )
+          VALUES ($1, $2, $3, $4, $5, 'resolved', $6, $7, $8, $9, $10, now(), 'condition_cleared')
+        `,
+        [
+          incidentId,
+          workspaceId,
+          processInstanceId,
+          candidate.type,
+          candidate.severity,
+          candidate.stage,
+          candidate.technicalMessage,
+          candidate.businessMessage,
+          candidate.source,
+          candidate.executionUrl,
+        ],
+      );
+      await addAudit(client, workspaceId, incidentId, 'created');
+      await addAudit(client, workspaceId, incidentId, 'resolved');
+      existing.set(key, {
+        id: incidentId,
+        incident_type: candidate.type,
+        affected_stage: candidate.stage,
+        status: 'resolved',
+        resolution_reason: 'condition_cleared',
+        notification_version: 1,
+        resolved_at: now,
+      });
+      created += 1;
+      resolved += 1;
+    }
 
     for (const [key, candidate] of candidates) {
       const incident = existing.get(key);

@@ -6,11 +6,15 @@ import type {
   ClientSummary,
   MemberInvite,
   MemberInviteResponse,
+  MemberCredentialResponse,
   MemberSummary,
   MemberUpdate,
   ProcessCreate,
   ProcessCreateResponse,
+  ProcessCredentialIssue,
+  ProcessCredentialRevoke,
   ProcessCredentialResponse,
+  ProcessCredentialSummary,
   ProcessSummary,
   ProcessStage,
   ProcessUpdate,
@@ -69,6 +73,15 @@ interface ProcessStageRow extends pg.QueryResultRow {
   timeout_seconds: number | null;
 }
 
+interface ProcessCredentialRow extends pg.QueryResultRow {
+  created_at: Date;
+  id: string;
+  key_id: string;
+  process_id: string;
+  revoked_at: Date | null;
+  revocation_reason: string | null;
+}
+
 const mapClient = (row: ClientRow): ClientSummary => ({
   id: row.id,
   name: row.name,
@@ -114,6 +127,15 @@ const mapProcessStage = (row: ProcessStageRow): ProcessStage => ({
   required: row.required,
   source: row.source,
   timeoutSeconds: row.timeout_seconds,
+});
+
+const mapProcessCredential = (row: ProcessCredentialRow): ProcessCredentialSummary => ({
+  id: row.id,
+  processId: row.process_id,
+  keyId: row.key_id,
+  createdAt: row.created_at.toISOString(),
+  revokedAt: row.revoked_at?.toISOString() ?? null,
+  revocationReason: row.revocation_reason,
 });
 
 function isUniqueViolation(error: unknown): boolean {
@@ -377,6 +399,9 @@ export async function updateMember(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query(`SELECT id FROM workspaces WHERE id = $1 FOR UPDATE`, [
+      principal.workspaceId,
+    ]);
     const current = await client.query<MemberRow>(
       `
         SELECT
@@ -398,12 +423,19 @@ export async function updateMember(
 
     const nextRole = input.role ?? member.role;
     const nextStatus = input.status ?? member.status;
-    if (member.role === 'owner' && (nextRole !== 'owner' || nextStatus === 'disabled')) {
+    const revokeCredential = member.status !== 'disabled' && nextStatus === 'disabled';
+    const revokedAccessKeyId = `revoked_member_key_${randomUUID()}`;
+    const revokedAccessKeyHash = sha256Hex(randomBytes(32).toString('base64url'));
+    const removesActiveOwner =
+      member.role === 'owner' &&
+      member.status === 'active' &&
+      (nextRole !== 'owner' || nextStatus === 'disabled');
+    if (removesActiveOwner) {
       const owners = await client.query<{ count: number }>(
         `
           SELECT count(*)::int AS count
           FROM workspace_members
-          WHERE workspace_id = $1 AND role = 'owner' AND status <> 'disabled'
+          WHERE workspace_id = $1 AND role = 'owner' AND status = 'active'
         `,
         [principal.workspaceId],
       );
@@ -415,7 +447,12 @@ export async function updateMember(
     const updated = await client.query<MemberRow>(
       `
         UPDATE workspace_members
-        SET role = $3, status = $4, updated_at = now()
+        SET
+          role = $3,
+          status = $4,
+          access_key_id = CASE WHEN $5 THEN $6 ELSE access_key_id END,
+          access_key_hash = CASE WHEN $5 THEN $7 ELSE access_key_hash END,
+          updated_at = now()
         WHERE workspace_id = $1 AND id = $2
         RETURNING
           id,
@@ -426,7 +463,15 @@ export async function updateMember(
           created_at,
           ARRAY[]::text[] AS client_ids
       `,
-      [principal.workspaceId, memberId, nextRole, nextStatus],
+      [
+        principal.workspaceId,
+        memberId,
+        nextRole,
+        nextStatus,
+        revokeCredential,
+        revokedAccessKeyId,
+        revokedAccessKeyHash,
+      ],
     );
     const clientIds = nextRole === 'viewer' ? (input.clientIds ?? []) : [];
     if (input.clientIds !== undefined || nextRole !== member.role) {
@@ -450,9 +495,57 @@ export async function updateMember(
       role: nextRole,
       status: nextStatus,
       clientIds: effectiveClientIds,
+      credentialRevoked: revokeCredential,
     });
     await client.query('COMMIT');
     return { ...mapMember(updated.rows[0]!), clientIds: effectiveClientIds };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    throw databaseFailure();
+  } finally {
+    client.release();
+  }
+}
+
+export async function rotateMemberCredential(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  memberId: string,
+): Promise<MemberCredentialResponse> {
+  const accessKeyId = `member_key_${randomUUID()}`;
+  const accessKey = `outtrace_member_${randomBytes(24).toString('base64url')}`;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(`SELECT id FROM workspaces WHERE id = $1 FOR UPDATE`, [
+      principal.workspaceId,
+    ]);
+    const updated = await client.query<{ updated_at: Date }>(
+      `
+        UPDATE workspace_members
+        SET
+          access_key_id = $3,
+          access_key_hash = $4,
+          updated_at = now()
+        WHERE workspace_id = $1 AND id = $2
+        RETURNING updated_at
+      `,
+      [principal.workspaceId, memberId, accessKeyId, sha256Hex(accessKey)],
+    );
+    if (!updated.rows[0]) {
+      throw resourceNotFound('MEMBER_NOT_FOUND', 'member');
+    }
+    await addWorkspaceAudit(client, principal, 'member_credential_rotated', 'member', memberId, {
+      accessKeyId,
+    });
+    await client.query('COMMIT');
+    return {
+      memberId,
+      accessKeyId,
+      accessKey,
+      rotatedAt: updated.rows[0].updated_at.toISOString(),
+    };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (error instanceof HttpError) throw error;
@@ -648,6 +741,7 @@ export async function createProcessCredential(
   pool: pg.Pool,
   principal: OperatorPrincipal,
   processId: string,
+  input: ProcessCredentialIssue = { revokeExisting: false },
 ): Promise<ProcessCredentialResponse> {
   const client = await pool.connect();
   try {
@@ -657,9 +751,130 @@ export async function createProcessCredential(
       [principal.workspaceId, processId],
     );
     if (!process.rows[0]) throw resourceNotFound('PROCESS_NOT_FOUND', 'process');
+    if (input.revokeExisting) {
+      const revoked = await client.query<{ key_id: string }>(
+        `
+          UPDATE process_ingestion_credentials
+          SET
+            revoked_at = now(),
+            revoked_by_member_id = $3,
+            revocation_reason = 'Rotated by replacement credential'
+          WHERE workspace_id = $1 AND process_id = $2 AND revoked_at IS NULL
+          RETURNING key_id
+        `,
+        [principal.workspaceId, processId, principal.memberId],
+      );
+      for (const row of revoked.rows) {
+        await addWorkspaceAudit(
+          client,
+          principal,
+          'process_ingestion_credential_revoked',
+          'process',
+          processId,
+          { keyId: row.key_id, reason: 'Rotated by replacement credential' },
+        );
+      }
+    }
     const credential = await insertProcessCredential(client, principal, processId);
     await client.query('COMMIT');
     return credential;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    if (error instanceof HttpError) throw error;
+    throw databaseFailure();
+  } finally {
+    client.release();
+  }
+}
+
+export async function listProcessCredentials(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  processId: string,
+): Promise<ProcessCredentialSummary[]> {
+  try {
+    const process = await pool.query<{ id: string }>(
+      `SELECT id FROM processes WHERE workspace_id = $1 AND id = $2`,
+      [principal.workspaceId, processId],
+    );
+    if (!process.rows[0]) throw resourceNotFound('PROCESS_NOT_FOUND', 'process');
+    const result = await pool.query<ProcessCredentialRow>(
+      `
+        SELECT
+          id,
+          process_id,
+          key_id,
+          created_at,
+          revoked_at,
+          revocation_reason
+        FROM process_ingestion_credentials
+        WHERE workspace_id = $1 AND process_id = $2
+        ORDER BY created_at DESC, id
+      `,
+      [principal.workspaceId, processId],
+    );
+    return result.rows.map(mapProcessCredential);
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw databaseFailure();
+  }
+}
+
+export async function revokeProcessCredential(
+  pool: pg.Pool,
+  principal: OperatorPrincipal,
+  processId: string,
+  credentialId: string,
+  input: ProcessCredentialRevoke,
+): Promise<ProcessCredentialSummary> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const process = await client.query<{ id: string }>(
+      `SELECT id FROM processes WHERE workspace_id = $1 AND id = $2 FOR UPDATE`,
+      [principal.workspaceId, processId],
+    );
+    if (!process.rows[0]) throw resourceNotFound('PROCESS_NOT_FOUND', 'process');
+    const result = await client.query<ProcessCredentialRow>(
+      `
+        UPDATE process_ingestion_credentials
+        SET
+          revoked_at = COALESCE(revoked_at, now()),
+          revoked_by_member_id = COALESCE(revoked_by_member_id, $4),
+          revocation_reason = COALESCE(revocation_reason, $5)
+        WHERE workspace_id = $1 AND process_id = $2 AND id = $3
+        RETURNING
+          id,
+          process_id,
+          key_id,
+          created_at,
+          revoked_at,
+          revocation_reason
+      `,
+      [
+        principal.workspaceId,
+        processId,
+        credentialId,
+        principal.memberId,
+        input.reason ?? 'Revoked by workspace owner',
+      ],
+    );
+    const credential = result.rows[0];
+    if (!credential) throw resourceNotFound('CREDENTIAL_NOT_FOUND', 'credential');
+    await addWorkspaceAudit(
+      client,
+      principal,
+      'process_ingestion_credential_revoked',
+      'process',
+      processId,
+      {
+        credentialId,
+        keyId: credential.key_id,
+        reason: credential.revocation_reason,
+      },
+    );
+    await client.query('COMMIT');
+    return mapProcessCredential(credential);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
     if (error instanceof HttpError) throw error;

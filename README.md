@@ -71,14 +71,14 @@ tools, and environments.
 
 ## Tech stack
 
-| Layer             | Technology                                         |
-| ----------------- | -------------------------------------------------- |
-| Dashboard         | React 19, TypeScript 5.9, Vite 8, GSAP             |
-| API               | Node.js 22, Fastify 5, Zod 4                       |
-| Background worker | BullMQ 5, Redis 7.4                                |
-| Persistence       | PostgreSQL 17, node-postgres                       |
-| Testing           | Vitest 4, Testing Library                          |
-| Workspace/tooling | npm workspaces, Docker Compose, ESLint 9, Prettier |
+| Layer             | Technology                                          |
+| ----------------- | --------------------------------------------------- |
+| Dashboard         | React 19, TypeScript 5.9, Vite 8, GSAP              |
+| API               | Node.js 22, Fastify 5, Zod 4                        |
+| Background worker | BullMQ 5, Redis 7.4                                 |
+| Persistence       | PostgreSQL 17, node-postgres                        |
+| Testing           | Vitest 4, Testing Library                           |
+| Workspace/tooling | npm workspaces, Docker Compose, ESLint 10, Prettier |
 
 ## Architecture
 
@@ -354,18 +354,19 @@ returns the same process-instance ID.
 
 ## Development commands
 
-| Command                    | Purpose                                                    |
-| -------------------------- | ---------------------------------------------------------- |
-| `npm run dev`              | Run the API, worker, and dashboard                         |
-| `npm run db:migrate`       | Apply pending SQL migrations and optional development seed |
-| `npm run format`           | Format source and documentation                            |
-| `npm run format:check`     | Verify formatting                                          |
-| `npm run lint`             | Run ESLint                                                 |
-| `npm run typecheck`        | Type-check every workspace                                 |
-| `npm test`                 | Run unit tests                                             |
-| `npm run test:integration` | Run PostgreSQL integration tests                           |
-| `npm run build`            | Build contracts and all applications                       |
-| `npm run verify`           | Run the complete Phase 4 quality suite                     |
+| Command                       | Purpose                                                    |
+| ----------------------------- | ---------------------------------------------------------- |
+| `npm run dev`                 | Run the API, worker, and dashboard                         |
+| `npm run db:migrate`          | Apply pending SQL migrations and optional development seed |
+| `npm run format`              | Format source and documentation                            |
+| `npm run format:check`        | Verify formatting                                          |
+| `npm run lint`                | Run ESLint                                                 |
+| `npm run typecheck`           | Type-check every workspace                                 |
+| `npm test`                    | Run unit tests                                             |
+| `npm run test:integration`    | Run PostgreSQL integration tests                           |
+| `npm run build`               | Build contracts and all applications                       |
+| `npm run workspace:bootstrap` | Create a production workspace and initial owner once       |
+| `npm run verify`              | Run the complete Phase 4 quality suite                     |
 
 The integration command loads `TEST_DATABASE_URL` from the root `.env` and fails if it is missing
 or unreachable. It creates a random PostgreSQL schema, migrates and tests inside it, then removes
@@ -382,34 +383,40 @@ and updates the seeded credential hash.
 keys, and database passwords are secrets. Variables prefixed with `VITE_` are compiled into browser
 code and must never contain credentials.
 
-| Variable                                            | Consumer          | Required/default                 | Notes                                           |
-| --------------------------------------------------- | ----------------- | -------------------------------- | ----------------------------------------------- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Compose           | Local defaults in `.env.example` | PostgreSQL container bootstrap                  |
-| `POSTGRES_PORT`                                     | Compose           | `5432`                           | Loopback-only host port                         |
-| `DATABASE_URL`                                      | API/migrations    | Required                         | PostgreSQL connection URL                       |
-| `TEST_DATABASE_URL`                                 | Integration tests | Required by integration/verify   | Must permit temporary schemas                   |
-| `REDIS_PORT`                                        | Compose           | `6379`                           | Loopback-only host port                         |
-| `REDIS_URL`                                         | API/worker        | Required                         | `redis://` or `rediss://`                       |
-| `NODE_ENV`                                          | API/migrations    | `development`                    | Development seeding is rejected in `production` |
-| `API_HOST`, `API_PORT`                              | API               | `127.0.0.1`, `3000`              | Listen address and port                         |
-| `API_CORS_ORIGIN`                                   | API               | `http://localhost:5173`          | Must exactly match the dashboard origin         |
-| `LOG_LEVEL`                                         | API               | `info`                           | Fastify log level                               |
-| `OUTTRACE_SEED_DEVELOPMENT`                         | Migrations        | `false` in code                  | Enables the local-only seed                     |
-| `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`         | Seed              | Required when seed enabled       | Public example values are local-only            |
-| `DEV_OPERATOR_KEY_ID`, `DEV_OPERATOR_KEY`           | Seed/dashboard    | Required when seed enabled       | Hashed operator credential for incident APIs    |
-| `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                 | Seed              | Required when seed enabled       | Stable local identifiers                        |
-| `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                 | Seed              | Required when seed enabled       | Stable local process                            |
-| `WORKER_CONCURRENCY`                                | Worker            | `5`, range 1–100                 | Parallel BullMQ jobs                            |
-| `WORKER_LOCK_DURATION_MS`                           | Worker            | `30000`, range 5000–600000       | BullMQ lock duration                            |
-| `WORKER_SHUTDOWN_TIMEOUT_MS`                        | Worker            | `30000`, range 100–120000        | Total shutdown deadline                         |
-| `REDIS_CONNECT_TIMEOUT_MS`                          | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                |
-| `PHASE_2_POLL_INTERVAL_MS`                          | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval    |
-| `PHASE_2_SWEEP_INTERVAL_MS`                         | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval            |
-| `RETENTION_SWEEP_INTERVAL_MS`                       | Worker            | `3600000`, range 60000–86400000  | Expired event cleanup interval                  |
-| `SLACK_WEBHOOK_URL`                                 | Worker            | Optional HTTPS URL               | Secret incoming webhook; configure outside Git  |
-| `SLACK_MINIMUM_SEVERITY`                            | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`          |
-| `DASHBOARD_BASE_URL`                                | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links       |
-| `VITE_API_BASE_URL`                                 | Dashboard         | `http://localhost:3000`          | Public browser-visible API origin               |
+| Variable                                                  | Consumer          | Required/default                 | Notes                                             |
+| --------------------------------------------------------- | ----------------- | -------------------------------- | ------------------------------------------------- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`       | Compose           | Local defaults in `.env.example` | PostgreSQL container bootstrap                    |
+| `POSTGRES_PORT`                                           | Compose           | `5432`                           | Loopback-only host port                           |
+| `DATABASE_URL`, `DATABASE_URL_FILE`                       | API/worker        | One required                     | Direct local URL or mounted secret file           |
+| `TEST_DATABASE_URL`                                       | Integration tests | Required by integration/verify   | Must permit temporary schemas                     |
+| `REDIS_PORT`                                              | Compose           | `6379`                           | Loopback-only host port                           |
+| `REDIS_URL`, `REDIS_URL_FILE`                             | API/worker        | One required                     | Direct local URL or mounted secret file           |
+| `NODE_ENV`                                                | API/migrations    | `development`                    | Development seeding is rejected in `production`   |
+| `API_HOST`, `API_PORT`                                    | API               | `127.0.0.1`, `3000`              | Listen address and port                           |
+| `API_CORS_ORIGIN`                                         | API               | `http://localhost:5173`          | Must exactly match the dashboard origin           |
+| `API_TRUST_PROXY`                                         | API               | `false`                          | Enable only behind the trusted production ingress |
+| `LOG_LEVEL`                                               | API               | `info`                           | Fastify log level                                 |
+| `OUTTRACE_SEED_DEVELOPMENT`                               | Migrations        | `false` in code                  | Enables the local-only seed                       |
+| `DEV_INGESTION_KEY_ID`, `DEV_INGESTION_KEY`               | Seed              | Required when seed enabled       | Public example values are local-only              |
+| `DEV_OPERATOR_KEY_ID`, `DEV_OPERATOR_KEY`                 | Seed/dashboard    | Required when seed enabled       | Hashed operator credential for incident APIs      |
+| `DEV_WORKSPACE_ID`, `DEV_CLIENT_ID`                       | Seed              | Required when seed enabled       | Stable local identifiers                          |
+| `DEV_PROCESS_ID`, `DEV_PROCESS_KEY`                       | Seed              | Required when seed enabled       | Stable local process                              |
+| `WORKER_CONCURRENCY`                                      | Worker            | `5`, range 1–100                 | Parallel BullMQ jobs                              |
+| `WORKER_LOCK_DURATION_MS`                                 | Worker            | `30000`, range 5000–600000       | BullMQ lock duration                              |
+| `WORKER_SHUTDOWN_TIMEOUT_MS`                              | Worker            | `30000`, range 100–120000        | Total shutdown deadline                           |
+| `REDIS_CONNECT_TIMEOUT_MS`                                | Worker            | `10000`, range 100–120000        | Initial Redis connection timeout                  |
+| `PHASE_2_POLL_INTERVAL_MS`                                | Worker            | `1000`, range 250–60000          | Evaluation/notification outbox poll interval      |
+| `PHASE_2_SWEEP_INTERVAL_MS`                               | Worker            | `30000`, range 1000–300000       | Missing-stage and SLA sweep interval              |
+| `RETENTION_SWEEP_INTERVAL_MS`                             | Worker            | `3600000`, range 60000–86400000  | Expired event cleanup interval                    |
+| `RETENTION_BATCH_SIZE`                                    | Worker            | `1000`, range 100–10000          | Maximum events deleted per statement              |
+| `RETENTION_MAX_BATCHES_PER_SWEEP`                         | Worker            | `10`, range 1–100                | Per-workspace cleanup work bound                  |
+| `IDEMPOTENCY_RETENTION_DAYS`                              | Worker            | `365`, range 30–3650             | Retry-receipt retention after raw event deletion  |
+| `OUTBOX_RETENTION_DAYS`                                   | Worker            | `90`, range 7–3650               | Completed outbox record retention                 |
+| `SLACK_WEBHOOK_URLS_JSON`, `SLACK_WEBHOOK_URLS_JSON_FILE` | Worker            | Empty mapping                    | Workspace-to-HTTPS-webhook secret mapping         |
+| `SLACK_MINIMUM_SEVERITY`                                  | Worker            | `high`                           | `critical`, `high`, `medium`, or `low`            |
+| `DASHBOARD_BASE_URL`                                      | Worker            | `http://localhost:5173`          | Base URL included in Slack incident links         |
+| `WORKER_HEALTH_HOST`, `WORKER_HEALTH_PORT`                | Worker            | `127.0.0.1`, `3001`              | Worker liveness/readiness listener                |
+| `VITE_API_BASE_URL`                                       | Dashboard         | `http://localhost:3000`          | Public browser-visible API origin                 |
 
 ## Repository layout
 
@@ -455,8 +462,10 @@ secret and performs constant-time comparison.
 Owner-created processes receive process-scoped ingestion credentials. Their plaintext secret is
 returned once at creation or issuance and is never returned by a read endpoint. A scoped credential
 can submit events only for its exact process key. Issuing another credential with
-`POST /v1/processes/:processId/credentials` adds a new valid credential; it does not revoke older
-credentials. Existing workspace-scoped credentials remain valid for backward compatibility.
+`POST /v1/processes/:processId/credentials` adds a new valid credential by default. Pass
+`{"revokeExisting":true}` for an atomic replacement, or canary the new key and revoke the prior key
+explicitly. Legacy workspace-scoped credentials remain available only in development and test;
+production accepts member operator keys and process-scoped ingestion keys.
 
 Authentication resolves the workspace and, when present, the credential's process before event
 persistence. Process lookup, event idempotency, and all persisted relationships are scoped to that
@@ -487,7 +496,9 @@ as the seeded owner so existing local setups can migrate without losing access.
 
 - `(process_id, instance_key)` is unique, so correlated events share one process instance even under
   concurrent requests.
-- `(workspace_id, external_event_id)` is unique, so duplicate event IDs cannot create two events.
+- `(workspace_id, external_event_id)` has a lightweight idempotency receipt, so raw-event retention
+  cannot recreate an event or collide with a longer-lived outbox row. Receipts default to a bounded
+  365-day horizon and are pruned only after the raw event and evaluation outbox are gone.
 - Correlation, event insertion, and instance-state changes occur in one PostgreSQL transaction.
 - Out-of-order events remain in the timeline, `started_at` tracks the earliest event, and current
   state uses `occurredAt` plus external event ID as a deterministic tie-breaker.
@@ -531,8 +542,10 @@ Errors use one envelope:
 
 ## Incident detection and delivery
 
-`GET /health` reports API status and separate PostgreSQL/Redis reachability. Dependency failures
-produce a degraded result, which the dashboard exposes with text and icons rather than color alone.
+`GET /health` reports API status and separate PostgreSQL/Redis reachability. `GET /live` is the
+process liveness probe, while `GET /ready` returns `503` until both dependencies are reachable.
+Dependency failures produce a degraded diagnostic result, which the dashboard exposes with text and
+icons rather than color alone.
 
 Every newly persisted event writes an evaluation-outbox row in the same PostgreSQL transaction.
 The worker publishes pending rows to BullMQ with stable job IDs and retry policy, then marks them
@@ -580,21 +593,24 @@ a `feedback_recorded` audit entry.
 
 All endpoints require the operator/member headers used by the incident API.
 
-| Method  | Endpoint                               | Role/access              | Purpose                                   |
-| ------- | -------------------------------------- | ------------------------ | ----------------------------------------- |
-| `GET`   | `/v1/session`                          | Any member               | Resolve role and visible client scope     |
-| `GET`   | `/v1/clients`                          | Any member               | List visible clients                      |
-| `POST`  | `/v1/clients`                          | Owner                    | Create a client boundary                  |
-| `GET`   | `/v1/clients/:clientId/report`         | Assigned client or above | Read lifetime reliability metrics         |
-| `GET`   | `/v1/members`                          | Owner                    | List members and access state             |
-| `POST`  | `/v1/members`                          | Owner                    | Invite a member and issue a key once      |
-| `PATCH` | `/v1/members/:memberId`                | Owner                    | Change role, status, or client access     |
-| `GET`   | `/v1/processes`                        | Any member               | List processes and connection evidence    |
-| `POST`  | `/v1/processes`                        | Owner                    | Create process, stages, and one-time key  |
-| `POST`  | `/v1/processes/:processId/credentials` | Owner                    | Issue another one-time process credential |
-| `PATCH` | `/v1/processes/:processId`             | Owner                    | Assign client, lifecycle, or allowlist    |
-| `GET`   | `/v1/workspace/settings`               | Owner                    | Read event retention policy               |
-| `PATCH` | `/v1/workspace/settings`               | Owner                    | Update event retention policy             |
+| Method  | Endpoint                                                    | Role/access              | Purpose                                   |
+| ------- | ----------------------------------------------------------- | ------------------------ | ----------------------------------------- |
+| `GET`   | `/v1/session`                                               | Any member               | Resolve role and visible client scope     |
+| `GET`   | `/v1/clients`                                               | Any member               | List visible clients                      |
+| `POST`  | `/v1/clients`                                               | Owner                    | Create a client boundary                  |
+| `GET`   | `/v1/clients/:clientId/report`                              | Assigned client or above | Read lifetime reliability metrics         |
+| `GET`   | `/v1/members`                                               | Owner                    | List members and access state             |
+| `POST`  | `/v1/members`                                               | Owner                    | Invite a member and issue a key once      |
+| `PATCH` | `/v1/members/:memberId`                                     | Owner                    | Change role, status, or client access     |
+| `POST`  | `/v1/members/:memberId/credentials/rotate`                  | Owner                    | Rotate a member key atomically            |
+| `GET`   | `/v1/processes`                                             | Any member               | List processes and connection evidence    |
+| `POST`  | `/v1/processes`                                             | Owner                    | Create process, stages, and one-time key  |
+| `POST`  | `/v1/processes/:processId/credentials`                      | Owner                    | Issue another one-time process credential |
+| `GET`   | `/v1/processes/:processId/credentials`                      | Owner                    | List process credential metadata          |
+| `POST`  | `/v1/processes/:processId/credentials/:credentialId/revoke` | Owner                    | Revoke one process key                    |
+| `PATCH` | `/v1/processes/:processId`                                  | Owner                    | Assign client, lifecycle, or allowlist    |
+| `GET`   | `/v1/workspace/settings`                                    | Owner                    | Read event retention policy               |
+| `PATCH` | `/v1/workspace/settings`                                    | Owner                    | Update event retention policy             |
 
 Client reports include instance completion rate, incident counts, resolved incidents, median
 resolution time, and the most unreliable stage. Owner changes and completed retention runs are
@@ -645,12 +661,14 @@ and must not be used for billing.
   superseded process.
 - Owners can archive or reactivate a process. Archived processes reject ingestion and are excluded
   from pilot activation and its process list; their existing evidence remains available.
-- A process credential is shown once and process-scoped. Credential expiry and revocation are not
-  included; issuing another credential does not invalidate earlier credentials.
-- Invitations issue a one-time access key through the API; email delivery, password login, SSO,
-  recovery, and key rotation are not included.
-- Slack is configured per deployment through environment variables. Per-workspace notification
-  settings and client/channel routing remain future work.
+- A process credential is shown once and process-scoped. Owners can list credential metadata, issue
+  a replacement, atomically revoke existing keys, or revoke one key with an audited reason.
+- Invitations issue a one-time access key through the API; email delivery, password login, SSO, and
+  automated account recovery remain future work. Member credentials support atomic rotation, and
+  disabling a member immediately revokes access.
+- Slack webhook secrets are configured outside the database and keyed by workspace. The worker
+  claims pending rows before delivery and never sends one workspace through another workspace's
+  destination.
 - Client reports are lifetime summaries; date-range filtering and scheduled exports are not yet
   included. The separate pilot-quality view has one fixed rolling 28-day window.
 - Retention removes expired raw events while preserving incidents, audit records, and summary
@@ -660,8 +678,14 @@ and must not be used for billing.
   overage metering are not included.
 - Recovery is an evidence and decision experiment. Outtrace does not retry, replay, call, approve,
   compensate, or automatically remediate customer workflows.
-- Compose runs PostgreSQL and Redis only, not application containers.
-- Production deployment, CI, backups/recovery, and hosted secret management are not included.
+- Local Compose runs PostgreSQL and Redis only. Hardened application images and the production
+  topology are defined in `Dockerfile` and `docker-compose.production.yml`.
+- A one-shot, audited bootstrap command creates each production workspace and its initial active
+  owner without enabling a legacy workspace-wide ingestion key.
+- `NODE_ENV=production` disables the legacy workspace-wide operator and ingestion credential
+  fallbacks; production access uses revocable member and process credentials.
+- Production secret-file handling, health/readiness probes, backups, restore drills, rollback, and
+  incident response are documented in the [production runbook](docs/production-runbook.md).
 
 ## Troubleshooting
 
@@ -686,10 +710,11 @@ use distinct credentials.
 
 ### A process credential was lost or exposed
 
-An owner can issue another secret with `POST /v1/processes/:processId/credentials`, but the endpoint
-does not revoke the old credential. A lost secret can simply be replaced in the source platform. If
-a secret may be exposed, stop the source integration, remove its stored copy, restrict deployment
-access, and arrange operational invalidation before resuming. The full response procedure is in the
+An owner can issue an atomic replacement with
+`POST /v1/processes/:processId/credentials` and `{"revokeExisting":true}`. For a planned no-downtime
+rotation, issue without revocation, canary the replacement, and then revoke the prior credential by
+ID. If a secret may be exposed, revoke it immediately and confirm the old key returns `401` before
+resuming. The full response procedure is in the
 [Phase 4 pilot runbook](docs/phase-4-pilot.md).
 
 ### Health is degraded
