@@ -59,7 +59,7 @@ export function authorizationForbidden(): HttpError {
 }
 
 export function resourceNotFound(
-  code: 'CLIENT_NOT_FOUND' | 'MEMBER_NOT_FOUND' | 'PROCESS_NOT_FOUND',
+  code: 'CLIENT_NOT_FOUND' | 'CREDENTIAL_NOT_FOUND' | 'MEMBER_NOT_FOUND' | 'PROCESS_NOT_FOUND',
   label: string,
 ): HttpError {
   return new HttpError(404, code, `The ${label} does not exist.`);

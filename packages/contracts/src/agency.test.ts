@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   memberInviteSchema,
   processCreateSchema,
+  processCredentialIssueSchema,
+  processCredentialRevokeSchema,
   processUpdateSchema,
   workspaceSettingsSchema,
 } from './agency.js';
@@ -64,5 +66,18 @@ describe('agency support contracts', () => {
       eventRetentionDays: 30,
     });
     expect(workspaceSettingsSchema.safeParse({ eventRetentionDays: 0 }).success).toBe(false);
+  });
+
+  it('supports explicit credential rotation and bounded revocation reasons', () => {
+    expect(processCredentialIssueSchema.parse(undefined)).toEqual({ revokeExisting: false });
+    expect(processCredentialIssueSchema.parse({ revokeExisting: true })).toEqual({
+      revokeExisting: true,
+    });
+    expect(processCredentialRevokeSchema.parse({ reason: 'Source integration retired.' })).toEqual({
+      reason: 'Source integration retired.',
+    });
+    expect(processCredentialRevokeSchema.safeParse({ reason: 'x'.repeat(501) }).success).toBe(
+      false,
+    );
   });
 });

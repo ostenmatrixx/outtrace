@@ -3,6 +3,8 @@ import {
   memberInviteSchema,
   memberUpdateSchema,
   processCreateSchema,
+  processCredentialIssueSchema,
+  processCredentialRevokeSchema,
   processUpdateSchema,
   workspaceSettingsSchema,
 } from '@outtrace/contracts';
@@ -18,7 +20,10 @@ import {
   inviteMember,
   listClients,
   listMembers,
+  listProcessCredentials,
   listProcesses,
+  revokeProcessCredential,
+  rotateMemberCredential,
   updateMember,
   updateProcess,
   updateWorkspaceSettings,
@@ -33,6 +38,10 @@ import {
 const clientParamsSchema = z.object({ clientId: z.string().min(1).max(200) });
 const memberParamsSchema = z.object({ memberId: z.string().min(1).max(200) });
 const processParamsSchema = z.object({ processId: z.string().min(1).max(200) });
+const processCredentialParamsSchema = z.object({
+  processId: z.string().min(1).max(200),
+  credentialId: z.string().min(1).max(200),
+});
 
 function parseOrThrow<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -108,6 +117,16 @@ export async function registerAgencyRoutes(app: FastifyInstance): Promise<void> 
     );
   });
 
+  app.post(
+    '/v1/members/:memberId/credentials/rotate',
+    { preHandler: authenticated },
+    async (request) => {
+      requireRole(request.outtraceOperator!, ['owner']);
+      const { memberId } = parseOrThrow(memberParamsSchema, request.params);
+      return rotateMemberCredential(app.outtrace.pool, request.outtraceOperator!, memberId);
+    },
+  );
+
   app.get('/v1/processes', { preHandler: authenticated }, async (request) => ({
     processes: await listProcesses(app.outtrace.pool, request.outtraceOperator!),
   }));
@@ -132,8 +151,44 @@ export async function registerAgencyRoutes(app: FastifyInstance): Promise<void> 
         app.outtrace.pool,
         request.outtraceOperator!,
         processId,
+        parseOrThrow(processCredentialIssueSchema, request.body),
       );
       return reply.code(201).send(credential);
+    },
+  );
+
+  app.get(
+    '/v1/processes/:processId/credentials',
+    { preHandler: authenticated },
+    async (request) => {
+      requireRole(request.outtraceOperator!, ['owner']);
+      const { processId } = parseOrThrow(processParamsSchema, request.params);
+      return {
+        credentials: await listProcessCredentials(
+          app.outtrace.pool,
+          request.outtraceOperator!,
+          processId,
+        ),
+      };
+    },
+  );
+
+  app.post(
+    '/v1/processes/:processId/credentials/:credentialId/revoke',
+    { preHandler: authenticated },
+    async (request) => {
+      requireRole(request.outtraceOperator!, ['owner']);
+      const { processId, credentialId } = parseOrThrow(
+        processCredentialParamsSchema,
+        request.params,
+      );
+      return revokeProcessCredential(
+        app.outtrace.pool,
+        request.outtraceOperator!,
+        processId,
+        credentialId,
+        parseOrThrow(processCredentialRevokeSchema, request.body),
+      );
     },
   );
 

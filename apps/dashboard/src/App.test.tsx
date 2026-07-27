@@ -18,7 +18,6 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
   mockFetch.mockReset();
-  window.sessionStorage.clear();
 });
 
 describe('dashboard shell', () => {

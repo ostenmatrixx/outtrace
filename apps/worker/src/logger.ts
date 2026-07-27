@@ -16,7 +16,7 @@ type LogLevel = 'info' | 'warn' | 'error';
 type LogSink = (line: string) => void;
 
 const SENSITIVE_KEY = /authorization|cookie|credential|password|payload|secret|token|url/i;
-const REDIS_CREDENTIALS = /(rediss?:\/\/)([^@\s/]+)@/gi;
+const URL_CREDENTIALS = /((?:rediss?|postgres(?:ql)?):\/\/)([^@\s/]+)@/gi;
 const QUERY_STRING = /([?&](?:key|password|secret|token)=)[^&\s]+/gi;
 
 function sanitizeValue(key: string, value: unknown): unknown {
@@ -38,21 +38,21 @@ function sanitizeValue(key: string, value: unknown): unknown {
   }
 
   if (typeof value === 'string') {
-    return redactMessage(value);
+    return safeErrorMessage(value);
   }
 
   return value;
 }
 
-function redactMessage(message: string): string {
-  return message.replace(REDIS_CREDENTIALS, '$1[REDACTED]@').replace(QUERY_STRING, '$1[REDACTED]');
+export function safeErrorMessage(message: string): string {
+  return message.replace(URL_CREDENTIALS, '$1[REDACTED]@').replace(QUERY_STRING, '$1[REDACTED]');
 }
 
 export function safeError(error: unknown): SafeError {
   if (error instanceof Error) {
     return {
       errorName: error.name,
-      errorMessage: redactMessage(error.message),
+      errorMessage: safeErrorMessage(error.message),
     };
   }
 

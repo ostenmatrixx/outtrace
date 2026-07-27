@@ -16,28 +16,6 @@ export interface OperatorSession {
   name: string;
 }
 
-const SESSION_KEY = 'outtrace.operator-session';
-
-export function loadOperatorSession(): OperatorSession | null {
-  try {
-    const raw = window.sessionStorage.getItem(SESSION_KEY);
-    if (!raw) return null;
-    const value = JSON.parse(raw) as Partial<OperatorSession>;
-    if (!value.keyId || !value.key || !value.name) return null;
-    return { keyId: value.keyId, key: value.key, name: value.name };
-  } catch {
-    return null;
-  }
-}
-
-export function saveOperatorSession(session: OperatorSession | null): void {
-  if (session) {
-    window.sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
-  } else {
-    window.sessionStorage.removeItem(SESSION_KEY);
-  }
-}
-
 export function operatorHeaders(session: OperatorSession): HeadersInit {
   return {
     Accept: 'application/json',

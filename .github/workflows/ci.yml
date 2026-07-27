@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: outtrace
+          POSTGRES_USER: outtrace
+          POSTGRES_PASSWORD: outtrace_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U outtrace -d outtrace"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgres://outtrace:outtrace_ci_only@127.0.0.1:5432/outtrace
+      TEST_DATABASE_URL: postgres://outtrace:outtrace_ci_only@127.0.0.1:5432/outtrace
+      REDIS_URL: redis://127.0.0.1:6379
+      RUN_REDIS_INTEGRATION: 'true'
+      OUTTRACE_SEED_DEVELOPMENT: 'false'
+      OUTTRACE_DASHBOARD_ORIGIN: https://app.example.invalid
+      OUTTRACE_PUBLIC_API_URL: https://api.example.invalid
+      OUTTRACE_DATABASE_URL_FILE: /tmp/outtrace-database-url
+      OUTTRACE_REDIS_URL_FILE: /tmp/outtrace-redis-url
+      OUTTRACE_SLACK_WEBHOOK_URLS_FILE: /tmp/outtrace-slack-webhook-urls
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm run verify
+      - run: docker compose -f docker-compose.production.yml config --quiet
+      - run: docker build --target api --tag outtrace-api:${{ github.sha }} .
+      - run: docker build --target worker --tag outtrace-worker:${{ github.sha }} .
+      - run: docker build --target dashboard --tag outtrace-dashboard:${{ github.sha }} .
+      - name: Validate read-only dashboard image
+        run: >-
+          docker run --rm --read-only
+          --tmpfs /tmp:uid=101,gid=101,mode=1770
+          --tmpfs /etc/nginx/conf.d:uid=101,gid=101,mode=0755
+          --env OUTTRACE_PUBLIC_API_URL=https://api.example.invalid
+          outtrace-dashboard:${{ github.sha }} nginx -t

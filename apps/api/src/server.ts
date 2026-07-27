@@ -6,6 +6,7 @@ import { ProductionRedisConnection } from './redis.js';
 async function start(): Promise<void> {
   const config = loadConfig();
   const app = await createApp({
+    allowLegacyWorkspaceCredentials: config.allowLegacyWorkspaceCredentials,
     corsOrigin: config.corsOrigin,
     dependencies: {
       pool: createPool(config),
@@ -13,7 +14,13 @@ async function start(): Promise<void> {
     },
     logger: {
       level: config.logLevel,
+      redact: {
+        paths: ['req.headers', 'request.headers'],
+        remove: true,
+      },
     },
+    production: config.nodeEnvironment === 'production',
+    trustProxy: config.trustProxy,
   });
 
   let shuttingDown = false;

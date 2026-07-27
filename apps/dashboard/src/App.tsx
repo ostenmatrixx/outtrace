@@ -23,11 +23,9 @@ import {
 import {
   fetchIncident,
   fetchIncidents,
-  loadOperatorSession,
   patchIncident,
   postIncidentNote,
   putIncidentFeedback,
-  saveOperatorSession,
   type OperatorSession,
 } from './incidents';
 
@@ -553,7 +551,7 @@ function IncidentDetailPanel({
 export function App() {
   const [snapshot, setSnapshot] = useState<HealthSnapshot>(loadingSnapshot);
   const [isRefreshing, setIsRefreshing] = useState(true);
-  const [session, setSession] = useState<OperatorSession | null>(() => loadOperatorSession());
+  const [session, setSession] = useState<OperatorSession | null>(null);
   const [incidents, setIncidents] = useState<IncidentSummary[]>([]);
   const [selected, setSelected] = useState<IncidentDetail | null>(null);
   const [incidentError, setIncidentError] = useState<string | null>(null);
@@ -561,7 +559,6 @@ export function App() {
   const [workspaceRole, setWorkspaceRole] = useState<WorkspaceRole | null>(null);
   const [filters, setFilters] = useState<DashboardFilters>({});
   const [pilotRefreshToken, setPilotRefreshToken] = useState(0);
-  const initialSession = useRef(session);
   const activeRequest = useRef<AbortController | null>(null);
   const mounted = useRef(false);
 
@@ -611,7 +608,6 @@ export function App() {
     queueMicrotask(() => {
       if (mounted.current) {
         void requestHealth();
-        if (initialSession.current) void loadInbox(initialSession.current);
       }
     });
     return () => {
@@ -775,7 +771,6 @@ export function App() {
                 type="button"
                 className="text-button"
                 onClick={() => {
-                  saveOperatorSession(null);
                   setSession(null);
                   setIncidents([]);
                   setSelected(null);
@@ -792,7 +787,6 @@ export function App() {
               onSubmit={async (candidate) => {
                 const accepted = await loadInbox(candidate);
                 if (accepted) {
-                  saveOperatorSession(candidate);
                   setSession(candidate);
                 }
               }}

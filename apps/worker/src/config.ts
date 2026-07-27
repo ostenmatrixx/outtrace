@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 export interface WorkerConfig {
   databaseUrl: string;
   redisUrl: string;
@@ -8,9 +10,15 @@ export interface WorkerConfig {
   phase2PollIntervalMs: number;
   phase2SweepIntervalMs: number;
   retentionSweepIntervalMs: number;
-  slackWebhookUrl?: string;
+  retentionBatchSize: number;
+  retentionMaxBatchesPerSweep: number;
+  idempotencyRetentionDays: number;
+  outboxRetentionDays: number;
+  slackWebhookUrls: Readonly<Record<string, string>>;
   slackMinimumSeverity: 'critical' | 'high' | 'medium' | 'low';
   dashboardBaseUrl: string;
+  healthHost: string;
+  healthPort: number;
 }
 
 const DEFAULT_CONCURRENCY = 5;
@@ -20,6 +28,10 @@ const DEFAULT_REDIS_CONNECT_TIMEOUT_MS = 10_000;
 const DEFAULT_PHASE_2_POLL_INTERVAL_MS = 1_000;
 const DEFAULT_PHASE_2_SWEEP_INTERVAL_MS = 30_000;
 const DEFAULT_RETENTION_SWEEP_INTERVAL_MS = 3_600_000;
+const DEFAULT_RETENTION_BATCH_SIZE = 1_000;
+const DEFAULT_RETENTION_MAX_BATCHES = 10;
+const DEFAULT_IDEMPOTENCY_RETENTION_DAYS = 365;
+const DEFAULT_OUTBOX_RETENTION_DAYS = 90;
 
 export class WorkerConfigError extends Error {
   override readonly name = 'WorkerConfigError';
@@ -64,6 +76,81 @@ function requiredDatabaseUrl(value: string | undefined): string {
   return value.trim();
 }
 
+function secretValue(
+  environment: NodeJS.ProcessEnv,
+  name: string,
+  required = true,
+): string | undefined {
+  const direct = environment[name]?.trim();
+  const file = environment[`${name}_FILE`]?.trim();
+  if (direct && file) {
+    throw new WorkerConfigError(`${name} and ${name}_FILE cannot both be set`);
+  }
+  if (file) {
+    try {
+      const value = readFileSync(file, 'utf8').trim();
+      if (value) return value;
+    } catch {
+      throw new WorkerConfigError(`${name}_FILE could not be read`);
+    }
+  }
+  if (direct) return direct;
+  if (required) throw new WorkerConfigError(`${name} or ${name}_FILE is required`);
+  return undefined;
+}
+
+function parseSlackWebhookUrls(environment: NodeJS.ProcessEnv): Readonly<Record<string, string>> {
+  const raw = secretValue(environment, 'SLACK_WEBHOOK_URLS_JSON', false);
+  const legacyWebhook = environment.SLACK_WEBHOOK_URL?.trim();
+  const legacyWorkspaceId = environment.SLACK_SINGLE_WORKSPACE_ID?.trim();
+  if (raw && legacyWebhook) {
+    throw new WorkerConfigError(
+      'SLACK_WEBHOOK_URLS_JSON and SLACK_WEBHOOK_URL cannot both be configured',
+    );
+  }
+
+  let input: unknown = {};
+  if (raw) {
+    try {
+      input = JSON.parse(raw);
+    } catch {
+      throw new WorkerConfigError('SLACK_WEBHOOK_URLS_JSON must contain a JSON object');
+    }
+  } else if (legacyWebhook) {
+    if (!legacyWorkspaceId) {
+      throw new WorkerConfigError(
+        'SLACK_SINGLE_WORKSPACE_ID is required with the legacy SLACK_WEBHOOK_URL setting',
+      );
+    }
+    input = { [legacyWorkspaceId]: legacyWebhook };
+  }
+
+  if (input === null || typeof input !== 'object' || Array.isArray(input)) {
+    throw new WorkerConfigError('SLACK_WEBHOOK_URLS_JSON must contain a JSON object');
+  }
+  const entries = Object.entries(input as Record<string, unknown>);
+  if (entries.length > 1_000) {
+    throw new WorkerConfigError('SLACK_WEBHOOK_URLS_JSON cannot contain more than 1000 workspaces');
+  }
+  const result: Record<string, string> = {};
+  for (const [workspaceId, value] of entries) {
+    if (!workspaceId.trim() || typeof value !== 'string') {
+      throw new WorkerConfigError('Slack webhook mappings require workspace IDs and HTTPS URLs');
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(value);
+    } catch {
+      throw new WorkerConfigError('Slack webhook mappings require valid HTTPS URLs');
+    }
+    if (parsed.protocol !== 'https:') {
+      throw new WorkerConfigError('Slack webhook mappings require HTTPS URLs');
+    }
+    result[workspaceId] = value;
+  }
+  return Object.freeze(result);
+}
+
 function integerInRange(
   name: string,
   value: string | undefined,
@@ -92,22 +179,37 @@ export function loadWorkerConfig(environment: NodeJS.ProcessEnv = process.env): 
   if (!['critical', 'high', 'medium', 'low'].includes(slackMinimumSeverity)) {
     throw new WorkerConfigError('SLACK_MINIMUM_SEVERITY must be critical, high, medium, or low');
   }
-  const slackWebhookUrl = environment.SLACK_WEBHOOK_URL?.trim();
-  if (slackWebhookUrl) {
-    let parsed: URL;
-    try {
-      parsed = new URL(slackWebhookUrl);
-    } catch {
-      throw new WorkerConfigError('SLACK_WEBHOOK_URL must be a valid HTTPS URL');
+  const dashboardBaseUrl = (environment.DASHBOARD_BASE_URL ?? 'http://localhost:5173').replace(
+    /\/+$/,
+    '',
+  );
+  try {
+    const parsed = new URL(dashboardBaseUrl);
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error('unsupported protocol');
     }
-    if (parsed.protocol !== 'https:') {
-      throw new WorkerConfigError('SLACK_WEBHOOK_URL must use https://');
+  } catch {
+    throw new WorkerConfigError('DASHBOARD_BASE_URL must be a valid HTTP or HTTPS URL');
+  }
+
+  const databaseUrl = requiredDatabaseUrl(secretValue(environment, 'DATABASE_URL'));
+  const redisUrl = requiredRedisUrl(secretValue(environment, 'REDIS_URL'));
+  if (environment.NODE_ENV === 'production') {
+    const sslMode = new URL(databaseUrl).searchParams.get('sslmode');
+    if (sslMode !== 'verify-full') {
+      throw new WorkerConfigError('DATABASE_URL must use sslmode=verify-full in production');
+    }
+    if (new URL(redisUrl).protocol !== 'rediss:') {
+      throw new WorkerConfigError('REDIS_URL must use rediss:// in production');
+    }
+    if (new URL(dashboardBaseUrl).protocol !== 'https:') {
+      throw new WorkerConfigError('DASHBOARD_BASE_URL must use HTTPS in production');
     }
   }
 
   return {
-    databaseUrl: requiredDatabaseUrl(environment.DATABASE_URL),
-    redisUrl: requiredRedisUrl(environment.REDIS_URL),
+    databaseUrl,
+    redisUrl,
     concurrency: integerInRange(
       'WORKER_CONCURRENCY',
       environment.WORKER_CONCURRENCY,
@@ -157,11 +259,44 @@ export function loadWorkerConfig(environment: NodeJS.ProcessEnv = process.env): 
       60_000,
       86_400_000,
     ),
-    ...(slackWebhookUrl ? { slackWebhookUrl } : {}),
+    retentionBatchSize: integerInRange(
+      'RETENTION_BATCH_SIZE',
+      environment.RETENTION_BATCH_SIZE,
+      DEFAULT_RETENTION_BATCH_SIZE,
+      100,
+      10_000,
+    ),
+    retentionMaxBatchesPerSweep: integerInRange(
+      'RETENTION_MAX_BATCHES_PER_SWEEP',
+      environment.RETENTION_MAX_BATCHES_PER_SWEEP,
+      DEFAULT_RETENTION_MAX_BATCHES,
+      1,
+      100,
+    ),
+    idempotencyRetentionDays: integerInRange(
+      'IDEMPOTENCY_RETENTION_DAYS',
+      environment.IDEMPOTENCY_RETENTION_DAYS,
+      DEFAULT_IDEMPOTENCY_RETENTION_DAYS,
+      30,
+      3_650,
+    ),
+    outboxRetentionDays: integerInRange(
+      'OUTBOX_RETENTION_DAYS',
+      environment.OUTBOX_RETENTION_DAYS,
+      DEFAULT_OUTBOX_RETENTION_DAYS,
+      7,
+      3_650,
+    ),
+    slackWebhookUrls: parseSlackWebhookUrls(environment),
     slackMinimumSeverity: slackMinimumSeverity as WorkerConfig['slackMinimumSeverity'],
-    dashboardBaseUrl: (environment.DASHBOARD_BASE_URL ?? 'http://localhost:5173').replace(
-      /\/+$/,
-      '',
+    dashboardBaseUrl,
+    healthHost: environment.WORKER_HEALTH_HOST?.trim() || '127.0.0.1',
+    healthPort: integerInRange(
+      'WORKER_HEALTH_PORT',
+      environment.WORKER_HEALTH_PORT,
+      3001,
+      1,
+      65_535,
     ),
   };
 }

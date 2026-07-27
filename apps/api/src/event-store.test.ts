@@ -41,7 +41,10 @@ function createFakePool(options: FakeClientOptions = {}): {
       if (normalized.includes('FROM processes')) {
         return { rowCount: 1, rows: [{ id: 'process_1' }] };
       }
-      if (normalized.includes('SELECT events.process_instance_id')) {
+      if (
+        normalized.includes('SELECT event_idempotency_keys.process_instance_id') ||
+        normalized.includes('SELECT events.process_instance_id')
+      ) {
         const rows = options.duplicateInstanceId
           ? [{ process_id: 'process_1', process_instance_id: options.duplicateInstanceId }]
           : [];

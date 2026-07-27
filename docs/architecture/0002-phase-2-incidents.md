@@ -19,7 +19,8 @@ SLA rules must fire without a new event, and repeated jobs must not create dupli
 ### Transactional evaluation outbox
 
 Each new event inserts an `event_evaluation_outbox` row in the same transaction as the event and
-process-instance state. Duplicate external event IDs do not create another outbox row.
+process-instance state. Duplicate external event IDs do not create another outbox row. ADR 0005
+adds a bounded lightweight receipt so that guarantee survives raw-event retention.
 
 The worker polls unpublished rows and adds BullMQ jobs with the outbox ID as the stable job ID.
 Only after Redis accepts the job does it mark the row published. A crash before that update can
@@ -50,8 +51,9 @@ explicit state; failures use bounded exponential backoff.
 
 Workspaces have a separate operator key ID and SHA-256 key hash. Incident APIs resolve the
 workspace from those credentials and scope every query and mutation to it. The dashboard accepts
-credentials at runtime and stores them only in `sessionStorage`; secrets are never placed in
-`VITE_*` variables or production bundles.
+credentials at runtime and retains them only in React memory until the page is refreshed or the
+inbox is locked; secrets are never placed in browser storage, `VITE_*` variables, or production
+bundles.
 
 ## Consequences
 
@@ -59,6 +61,6 @@ credentials at runtime and stores them only in `sessionStorage`; secrets are nev
 - Evaluation and notifications survive process restarts and remain inspectable.
 - Repeated or concurrently delivered jobs cannot create duplicate incident records.
 - Time-based rules are bounded by the configured sweep interval.
-- Phase 2 uses deployment-level Slack settings. Per-workspace encrypted webhook configuration,
-  user accounts, and roles are deferred to Phase 3.
-- Outbox retention/archival will need an explicit production policy as volume grows.
+- Phase 2 originally used deployment-level Slack settings and deferred outbox retention. ADR 0005
+  supersedes both constraints with workspace-keyed secret routing, delivery leases, and bounded
+  completed-outbox retention.

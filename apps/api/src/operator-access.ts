@@ -15,6 +15,7 @@ export async function authenticateOperatorRequest(
   const principal = await authenticateOperatorPrincipal(
     app.outtrace.pool,
     readOperatorCredentials(request),
+    app.outtrace.allowLegacyWorkspaceCredentials,
   );
   request.outtraceWorkspaceId = principal.workspaceId;
   request.outtraceOperator = principal;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { safeError, serializeLog } from './logger.js';
+import { safeError, safeErrorMessage, serializeLog } from './logger.js';
 
 describe('safe logging', () => {
   it('produces structured service logs and redacts sensitive fields recursively', () => {
@@ -35,5 +35,11 @@ describe('safe logging', () => {
       errorName: 'Error',
       errorMessage: 'Could not connect to redis://[REDACTED]@redis.example.com:6379',
     });
+    expect(safeErrorMessage('Request failed?token=super-secret&attempt=2')).toBe(
+      'Request failed?token=[REDACTED]&attempt=2',
+    );
+    expect(safeErrorMessage('postgres://worker:secret@db.example.com/outtrace failed')).toBe(
+      'postgres://[REDACTED]@db.example.com/outtrace failed',
+    );
   });
 });

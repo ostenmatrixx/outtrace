@@ -66,12 +66,14 @@ export async function persistEvent(
 
     const duplicateResult = await client.query<DuplicateRow>(
       `
-        SELECT events.process_instance_id, process_instances.process_id
-        FROM events
+        SELECT event_idempotency_keys.process_instance_id, process_instances.process_id
+        FROM event_idempotency_keys
         JOIN process_instances
-          ON process_instances.workspace_id = events.workspace_id
-          AND process_instances.id = events.process_instance_id
-        WHERE events.workspace_id = $1 AND events.external_event_id = $2
+          ON process_instances.workspace_id = event_idempotency_keys.workspace_id
+          AND process_instances.id = event_idempotency_keys.process_instance_id
+        WHERE
+          event_idempotency_keys.workspace_id = $1
+          AND event_idempotency_keys.external_event_id = $2
       `,
       [workspaceId, event.eventId],
     );
@@ -166,6 +168,18 @@ export async function persistEvent(
       if (!original) {
         throw new Error('Conflicting event could not be resolved.');
       }
+      await client.query(
+        `
+          INSERT INTO event_idempotency_keys (
+            workspace_id,
+            external_event_id,
+            process_instance_id
+          )
+          VALUES ($1, $2, $3)
+          ON CONFLICT (workspace_id, external_event_id) DO NOTHING
+        `,
+        [workspaceId, event.eventId, original.process_instance_id],
+      );
       if (credentialProcessId !== null && original.process_id !== credentialProcessId) {
         throw new HttpError(
           404,
@@ -198,6 +212,18 @@ export async function persistEvent(
         processInstanceId: original.process_instance_id,
       };
     }
+
+    await client.query(
+      `
+        INSERT INTO event_idempotency_keys (
+          workspace_id,
+          external_event_id,
+          process_instance_id
+        )
+        VALUES ($1, $2, $3)
+      `,
+      [workspaceId, event.eventId, instance.id],
+    );
 
     await client.query(
       `
