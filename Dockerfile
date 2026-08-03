@@ -53,7 +53,7 @@ USER node
 EXPOSE 3001
 CMD ["node", "apps/worker/dist/main.js"]
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS dashboard
+FROM nginxinc/nginx-unprivileged:1.30-alpine AS dashboard
 COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/apps/dashboard/dist /usr/share/nginx/html
 EXPOSE 8080
